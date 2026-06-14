@@ -1,0 +1,54 @@
+name: CI Contract Regression Gate
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'shared/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'shared/**'
+
+# Automatically cancel out-of-date runs if a developer pushes new commits rapidly
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract-gate:
+    name: Verify Integration Contract
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python Runtime
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11' # Matches your stable standard runtime
+
+      - name: Verify Package Layout
+        run: |
+          # Ensure Python handles relative imports cleanly by verifying structure
+          if [ ! -f "shared/__init__.py" ]; then
+            echo "::warning file=shared/__init__.py::Missing __init__.py in shared directory. Creating it temporarily for isolation testing."
+            touch shared/__init__.py
+          fi
+
+      - name: Run Smoke Test Gate
+        run: |
+          # Directly invokes your explicit test mandate from the project root
+          python -c "import asyncio; from shared.harp_contract import _smoke; asyncio.run(_smoke())"
+
+      - name: Catch Contract Structural Breaks
+        if: failure()
+        run: |
+          echo "::error::The integration spine contract in 'shared/harp_contract.py' has been broken."
+          echo "::error::Changes to abstract types, Enums, or PlanGraph DAG sorting require explicit CTO sign-off."
