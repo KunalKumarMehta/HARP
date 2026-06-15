@@ -1,0 +1,40 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://harp/shared/plan_schema.json",
+  "title": "HARP PlanGraph wire contract",
+  "description": "The kilobyte-scale JSON DAG the cloud planner (NAT ReWOO) emits to the edge executor. One codec, both sides (plan_emitter.to_wire / from_wire). 'decision' is the HARP wire name for NAT's native 'tier_decision' field; value 'undecided' == RouteDecision.AUTO and signals the edge router to resolve the tier. Grounding: NeMo Agent Toolkit DAG doc (deferred tier idiom), harp_contract.py freeze.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["plan_id", "steps"],
+  "properties": {
+    "plan_id": { "type": "string", "minLength": 1 },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/planStep" }
+    }
+  },
+  "$defs": {
+    "planStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_id", "modality", "decision", "model_id", "prompt", "depends_on"],
+      "properties": {
+        "step_id": { "type": "string", "minLength": 1 },
+        "modality": { "type": "string", "enum": ["text", "audio", "vision"] },
+        "decision": {
+          "type": "string",
+          "enum": ["local", "escalate", "undecided"],
+          "description": "local/escalate = planner pin (honored as-is). undecided = AUTO; edge PolicyRouter resolves via the calibrated gate. Planner SHOULD emit 'undecided' by default and pin only when structurally certain."
+        },
+        "model_id": { "type": "string", "minLength": 1 },
+        "prompt": { "type": "string" },
+        "depends_on": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Antecedent step_ids. Must reference existing steps; graph must be acyclic (validated at emit time via topo_order)."
+        }
+      }
+    }
+  }
+}
