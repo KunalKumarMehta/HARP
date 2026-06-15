@@ -72,30 +72,51 @@ async def run_config(be: Backend, label: str, req: InferRequest, runs: int = 12)
     )
 
 
-def render_pack(base: BenchResult, opt: BenchResult) -> str:
+# DR-3 defensible bands. A measured delta OUTSIDE these means the baseline is wrong.
+#   HF/PyTorch static -> vLLM     : order-of-magnitude (up to ~75% fleet reduction)
+#   vLLM -> TensorRT-LLM          : +15-30% throughput, -10-20% p50 TTFT  (NOT a big multiplier)
+TRTLLM_TPS_BAND = (1.15, 1.30)
+TRTLLM_TTFT_BAND = (1.10, 1.20)
+
+
+def _flag(x: float, band: tuple[float, float]) -> str:
+    lo, hi = band
+    if x < lo:   return "below band"
+    if x > hi:   return "ABOVE band — verify baseline is vLLM, not HF/PyTorch"
+    return "defensible"
+
+
+def render_pack(base: BenchResult, opt: BenchResult, baseline_engine: str = "vLLM") -> str:
     ttft_x, tps_x = opt.speedup_vs(base)
     gpu_fraction = (1.0 / tps_x) if tps_x else float("inf")
+    tps_note = _flag(tps_x, TRTLLM_TPS_BAND) if baseline_engine == "vLLM" else "baseline=HF/PyTorch (large multiplier expected)"
+    ttft_note = _flag(ttft_x, TRTLLM_TTFT_BAND) if baseline_engine == "vLLM" else ""
     lines = [
         "================ NVIDIA EVIDENCE PACK (cloud planner workload) ================",
+        f"baseline engine: {baseline_engine}   optimized engine: TensorRT-LLM / Triton",
         f"{'metric':<22}{'baseline':>14}{'optimized':>14}{'delta':>12}",
         "-" * 62,
-        f"{'TTFT p50 (ms)':<22}{base.ttft_ms_p50:>14.1f}{opt.ttft_ms_p50:>14.1f}{ttft_x:>11.2f}x",
-        f"{'TTFT p99 (ms)':<22}{base.ttft_ms_p99:>14.1f}{opt.ttft_ms_p99:>14.1f}{'':>12}",
-        f"{'throughput (tok/s)':<22}{base.tok_s_mean:>14.1f}{opt.tok_s_mean:>14.1f}{tps_x:>11.2f}x",
-        f"{'goodput @SLA<%dms' % TTFT_SLA_MS:<22}{base.sla_pass_rate:>13.0%}{opt.sla_pass_rate:>14.0%}{'':>12}",
+        f"{'TTFT p50 (ms)':<22}{base.ttft_ms_p50:>14.1f}{opt.ttft_ms_p50:>14.1f}{ttft_x:>11.2f}x  ({ttft_note})",
+        f"{'TTFT p99 (ms)':<22}{base.ttft_ms_p99:>14.1f}{opt.ttft_ms_p99:>14.1f}",
+        f"{'throughput (tok/s)':<22}{base.tok_s_mean:>14.1f}{opt.tok_s_mean:>14.1f}{tps_x:>11.2f}x  ({tps_note})",
+        f"{'goodput @SLA<%dms' % TTFT_SLA_MS:<22}{base.sla_pass_rate:>13.0%}{opt.sla_pass_rate:>14.0%}",
         "-" * 62,
-        "JUDGE FRAMING (fill with real GenAI-Perf numbers on the GPU box):",
-        f"  • Latency: {ttft_x:.1f}x faster time-to-first-token under identical workload.",
-        f"  • Throughput: {tps_x:.1f}x tokens/s at the same TTFT SLA (this is goodput, not raw TPS).",
-        f"  • TCO: {tps_x:.1f}x goodput => ~{gpu_fraction:.2f} of the GPU fleet for equal concurrent users.",
-        "  • Roofline: decode shifted from memory-bandwidth-bound toward peak HBM BW",
-        "    via Paged KV + in-flight batching (prove with Nsight Compute on the box).",
-        "  • Safety with no latency tax: NeMo Guardrails stream_first=True, parallel",
-        "    output rails (content_safety + pii) on 128-tok chunks.",
+        "JUDGE FRAMING (DR-3 rules — cite measured, ban aspirational TFLOPS):",
+        f"  • TTFT: {ttft_x:.2f}x ({ttft_note}). State baseline explicitly: vs {baseline_engine}.",
+        f"  • Throughput: {tps_x:.2f}x at fixed TTFT SLA = goodput, not raw TPS.",
+        f"  • TCO: {tps_x:.2f}x goodput => ~{gpu_fraction:.2f} of the fleet for equal users.",
+        "    (The order-of-magnitude win is HF->vLLM ~75% fleet cut; TRT-LLM is the",
+        "     +15-30% efficiency-extraction layer on top — frame it as exactly that.)",
+        "  • Roofline: show decode moving toward peak HBM BW via Paged KV + in-flight",
+        "    batching (Nsight Compute). Ban peak-TFLOPS claims; decode is BW-bound.",
+        "  • Safety, no latency tax: NeMo Guardrails stream_first=True, parallel rails.",
         "==============================================================================",
-        "NEXT (real numbers): genai-perf analyze -m <model> --backend tensorrtllm \\",
-        "  --endpoint-type chat --sweep-type concurrency --sweep-range 1:256 \\",
-        "  --synthetic-input-tokens-mean 2000 --output-tokens-mean 500",
+        "REAL NUMBERS (2026 — config.pbtxt MUST set exclude_input_in_output: true):",
+        "  legacy:  genai-perf analyze -m <model> --backend tensorrtllm --endpoint-type chat \\",
+        "           --streaming --sweep-type concurrency --sweep-range 1:256 --output-tokens-mean-deterministic",
+        "  modern:  aiperf profile --model <model> --backend tensorrtllm \\",
+        "           --search-space 'concurrency:1,1000:int' --search-metric output_token_throughput \\",
+        "           --search-direction maximize    (Bayesian/Optuna; GenAI-Perf is deprecating)",
     ]
     return "\n".join(lines)
 

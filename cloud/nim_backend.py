@@ -1,20 +1,20 @@
 """
 HARP — Hardware-Aware Routing Platform
-cloud/nim_backend.py  ·  CCE owns this  ·  MIT
+cloud/nim_backend.py  ·  CCE owns this  ·  MIT  ·  v2 (verified against DR-1)
 
-The CLOUD half of the one-call swap. Implements shared/harp_contract.Backend
-over any OpenAI-compatible NIM endpoint (build.nvidia.com hosted NIM, a local
-NIM container, or trtllm-serve). CTO's Router treats this identically to CEE's
-QNNBackend — it negotiates Capability, calls infer()/profile(), never imports
-this class. That invariant is the whole point of the contract.
+Cloud half of the one-call swap. Implements shared/harp_contract.Backend over
+any OpenAI-compatible NIM endpoint. CTO's Router treats this identically to
+CEE's QNNBackend — negotiates Capability, calls infer()/profile(), never
+imports this class.
 
-Grounding (see project research):
-  - NIM exposes OpenAI /v1/chat/completions with SSE stream=true  -> NeMo Planner Architecture doc §"NIM Microservices"
-  - TTFT is measured at FIRST CONTENT token, empty frames disregarded -> NVIDIA Optimization Strategy doc §"Core Mathematical Metrics" (GenAI-Perf rule)
-  - tok/s + TTFT carried in Metrics so the NVIDIA before/after delta is real, not simulated
-
-UNVERIFIED until deep-research pass (do not hardcode): exact Nemotron NIM
-model_id strings. Pass model_id via InferRequest; default is a placeholder.
+VERIFIED (NVIDIA Nemotron NIM Specifications doc, June 2026):
+  - base: https://integrate.api.nvidia.com/v1 ; auth: Bearer $NVIDIA_API_KEY
+  - reasoning models stream CoT on delta.reasoning_content, answer on delta.content
+    -> v1 dropped reasoning_content silently. FIXED: both handled; TTFT lands on
+       the FIRST token of EITHER stream (true first-generation instant).
+  - reasoning control via extra_body.chat_template_kwargs.enable_thinking +
+    reasoning_budget / min_thinking_tokens
+No hardcoded model strings: model resolved by Role through model_registry.
 """
 
 from __future__ import annotations
@@ -22,45 +22,37 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import AsyncIterator
 
 import httpx
 
 from shared.harp_contract import (
-    Backend,
-    Capability,
-    InferRequest,
-    Metrics,
-    Modality,
-    Tier,
+    Backend, Capability, InferRequest, Metrics, Modality, Tier,
 )
+from cloud.model_registry import Role, ModelSpec, resolve
 
-# ---------------------------------------------------------------- config
 
 @dataclass
 class NIMConfig:
     base_url: str = os.getenv("HARP_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
-    api_key: str | None = os.getenv("HARP_NIM_API_KEY")  # build.nvidia.com key; None for local NIM
-    # PLACEHOLDER — replace post-verification with the real catalog id.
-    default_model: str = os.getenv("HARP_NIM_MODEL", "nvidia/nemotron-planner-PLACEHOLDER")
+    api_key: str | None = os.getenv("HARP_NIM_API_KEY")     # None for local NIM container
+    # Default cloud role this backend serves when a request gives no explicit model.
+    default_role: Role = Role.MANAGER_PRAGMATIC
+    enable_thinking: bool = False        # planner steps flip this True
+    reasoning_budget: int = 8192
+    min_thinking_tokens: int = 0
+    surface_reasoning: bool = False      # if True, infer() also yields CoT tokens
     request_timeout_s: float = 120.0
     connect_timeout_s: float = 10.0
-    # Advertised ceilings — used only for capability negotiation, not enforcement.
-    max_context: int = 128_000
     ram_gb: float = 80.0
 
 
-# ---------------------------------------------------------------- backend
-
 class NIMBackend(Backend):
-    """Cloud backend: OpenAI-compatible NIM. Streaming is mandatory (contract)
-    so TTFT measured here is a true wall-clock first-token, identical metric
-    shape to what CEE reports on QNN. That symmetry is what lets the pitch say
-    'same harness, two tiers, here is the delta.'"""
-
-    def __init__(self, cfg: NIMConfig | None = None):
+    def __init__(self, cfg: NIMConfig | None = None, role: Role | None = None):
         self.cfg = cfg or NIMConfig()
+        self.role = role or self.cfg.default_role
+        self.spec: ModelSpec = resolve(self.role)
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(self.cfg.request_timeout_s, connect=self.cfg.connect_timeout_s),
             headers=self._auth_headers(),
@@ -75,104 +67,120 @@ class NIMBackend(Backend):
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    # ---- contract method 1: capability negotiation -----------------------
+    # ---- contract 1: capability negotiation ------------------------------
     async def capabilities(self) -> Capability:
-        """Cloud promises all modalities + huge context, but NOT offline. The
-        Router's offline guard reads exactly this to fail-closed to edge."""
+        """Cloud: all modalities, large ctx, NOT offline. Router's offline guard
+        reads offline_capable=False here and fails closed to edge."""
+        mods = ((Modality.TEXT, Modality.AUDIO, Modality.VISION)
+                if self.spec.multimodal else (Modality.TEXT,))
         return Capability(
-            backend_id="nim-cloud",
-            tier=Tier.CLOUD,
-            npu_present=False,
-            ram_gb=self.cfg.ram_gb,
-            max_context=self.cfg.max_context,
-            modalities=(Modality.TEXT, Modality.AUDIO, Modality.VISION),
-            offline_capable=False,
-            supports_streaming=True,
+            backend_id=f"nim-cloud:{self.role.value}",
+            tier=Tier.CLOUD, npu_present=False, ram_gb=self.cfg.ram_gb,
+            max_context=self.spec.context_window or 0,
+            modalities=mods, offline_capable=False, supports_streaming=True,
         )
 
-    # ---- contract method 2: token stream ---------------------------------
-    async def infer(self, req: InferRequest) -> AsyncIterator[str]:
-        """SSE token stream from /chat/completions. Yields content deltas only;
-        the [DONE] sentinel and empty role-frames are dropped so the consumer
-        (CTO Router) sees pure content — and so TTFT lands on real text."""
-        payload = {
-            "model": req.model_id or self.cfg.default_model,
-            "messages": req.messages,
-            "max_tokens": req.max_tokens,
-            "stream": True,
-            "temperature": 0.1,
+    def _payload(self, req: InferRequest) -> dict:
+        model = req.model_id or self.spec.model_id
+        body: dict = {
+            "model": model, "messages": req.messages,
+            "max_tokens": req.max_tokens, "stream": True, "temperature": 0.1,
         }
+        if self.spec.reasoning:
+            body["extra_body"] = {
+                "chat_template_kwargs": {"enable_thinking": self.cfg.enable_thinking},
+                "reasoning_budget": self.cfg.reasoning_budget,
+                "min_thinking_tokens": self.cfg.min_thinking_tokens,
+            }
+        return body
+
+    @staticmethod
+    def _deltas(chunk: dict) -> tuple[str | None, str | None]:
+        d = (chunk.get("choices") or [{}])[0].get("delta", {})
+        return d.get("content"), d.get("reasoning_content")
+
+    # ---- contract 2: token stream ----------------------------------------
+    async def infer(self, req: InferRequest) -> AsyncIterator[str]:
+        """Yields answer content. If surface_reasoning, CoT tokens are yielded
+        wrapped so the consumer can distinguish them. Empty/role frames dropped."""
         url = f"{self.cfg.base_url}/chat/completions"
-        async with self._client.stream("POST", url, json=payload) as resp:
+        async with self._client.stream("POST", url, json=self._payload(req)) as resp:
             resp.raise_for_status()
             async for line in resp.aiter_lines():
                 if not line or not line.startswith("data:"):
                     continue
-                data = line[len("data:"):].strip()
+                data = line[5:].strip()
                 if data == "[DONE]":
                     break
                 try:
                     chunk = json.loads(data)
                 except json.JSONDecodeError:
                     continue
-                delta = (chunk.get("choices") or [{}])[0].get("delta", {})
-                tok = delta.get("content")
-                if tok:                      # drop empty/role-only frames (GenAI-Perf TTFT rule)
-                    yield tok
+                content, reasoning = self._deltas(chunk)
+                if reasoning and self.cfg.surface_reasoning:
+                    yield f"\u2039think\u203a{reasoning}"   # ‹think›… marker, opt-in
+                if content:
+                    yield content
 
-    # ---- contract method 3: profiling (the NVIDIA-scoring metric) --------
+    # ---- contract 3: profiling (the NVIDIA-scoring metric) ---------------
     async def profile(self, req: InferRequest) -> Metrics:
-        """One real generation, wall-clock instrumented. TTFT = time to first
-        CONTENT token. tok/s = output tokens / (last - first). energy/thermal
-        are None on cloud by contract (edge-only fields)."""
+        """TTFT = wall-clock to first token of EITHER stream (generation truly
+        began). tok/s counts ANSWER (content) tokens over the answer window —
+        reasoning tokens excluded from tok/s so the throughput number is the
+        user-visible rate, not inflated by CoT. energy/thermal None on cloud."""
+        url = f"{self.cfg.base_url}/chat/completions"
         t0 = time.perf_counter()
         ttft_ms: float | None = None
-        first_tok_t: float | None = None
-        n = 0
-        last_t = t0
-        async for _tok in self.infer(req):
-            now = time.perf_counter()
-            if ttft_ms is None:
-                ttft_ms = (now - t0) * 1000.0
-                first_tok_t = now
-            n += 1
-            last_t = now
-        gen_window = (last_t - first_tok_t) if (first_tok_t and n > 1) else None
-        tok_s = (n / gen_window) if gen_window and gen_window > 0 else 0.0
+        first_answer_t: float | None = None
+        last_answer_t = t0
+        answer_toks = 0
+        async with self._client.stream("POST", url, json=self._payload(req)) as resp:
+            resp.raise_for_status()
+            async for line in resp.aiter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                content, reasoning = self._deltas(chunk)
+                now = time.perf_counter()
+                if ttft_ms is None and (content or reasoning):
+                    ttft_ms = (now - t0) * 1000.0          # first generation instant
+                if content:
+                    if first_answer_t is None:
+                        first_answer_t = now
+                    answer_toks += 1
+                    last_answer_t = now
+        window = (last_answer_t - first_answer_t) if (first_answer_t and answer_toks > 1) else None
+        tok_s = (answer_toks / window) if window and window > 0 else 0.0
         return Metrics(
-            backend_id="nim-cloud",
+            backend_id=f"nim-cloud:{self.role.value}",
             ttft_ms=ttft_ms if ttft_ms is not None else float("inf"),
-            tokens_per_s=tok_s,
-            energy_mj_per_tok=None,   # cloud: not measured (contract)
-            thermal_c=None,
+            tokens_per_s=tok_s, energy_mj_per_tok=None, thermal_c=None,
         )
 
 
-# ---------------------------------------------------------------- smoke (live or skip)
-
 async def _smoke() -> None:
-    """Runs only if HARP_NIM_API_KEY (or a reachable local NIM) is set.
-    Proves the contract methods over a real endpoint before CTO wires it in."""
     cfg = NIMConfig()
     if not cfg.api_key and "localhost" not in cfg.base_url and "127.0.0.1" not in cfg.base_url:
         print("SKIP live smoke: set HARP_NIM_API_KEY or point HARP_NIM_BASE_URL at a local NIM.")
+        print(f"resolved role={NIMBackend(cfg).role.value} model={NIMBackend(cfg).spec.model_id}")
         return
     be = NIMBackend(cfg)
     try:
         cap = await be.capabilities()
-        print(f"capabilities: {cap.backend_id} tier={cap.tier.value} "
-              f"modalities={[m.value for m in cap.modalities]} offline={cap.offline_capable}")
-        req = InferRequest(
-            messages=[{"role": "user", "content": "Reply with exactly: routing online."}],
-            model_id=cfg.default_model,
-            max_tokens=32,
-        )
-        print("infer stream:", end=" ")
+        print(f"cap: {cap.backend_id} mods={[m.value for m in cap.modalities]} ctx={cap.max_context} offline={cap.offline_capable}")
+        req = InferRequest(messages=[{"role": "user", "content": "Reply exactly: routing online."}],
+                           model_id="", max_tokens=32)
+        print("infer:", end=" ")
         async for t in be.infer(req):
             print(t, end="", flush=True)
-        print()
         m = await be.profile(req)
-        print(f"profile: ttft={m.ttft_ms:.1f}ms tok/s={m.tokens_per_s:.1f}")
+        print(f"\nprofile: ttft={m.ttft_ms:.1f}ms tok/s={m.tokens_per_s:.1f}")
     finally:
         await be.aclose()
 
