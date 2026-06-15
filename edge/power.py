@@ -2,32 +2,115 @@
 HARP · edge/power.py · CEE-owned · MIT
 Instantaneous power telemetry for energy-per-token.
 
-Grounding (Snapdragon NPU Profiling Guide):
-  - E_token = ∫P(t)dt / N_tokens, reported in mJ                     §"Mathematics of Energy-per-Token"
-  - Android: P = V·I from BatteryManager CURRENT_NOW(µA) × voltage   §"Telemetry Acquisition via Android OS APIs"
-  - WoS:     read Hexagon/CPU/total rails from HWiNFO64 shared mem   §"Telemetry on Windows on Snapdragon"
-  - Subtract idle baseline (screen on, radios on, no inference) to
-    attribute energy to the NPU + memory bus, not the whole SoC.     §"Advanced telemetry ... subtract this baseline"
-
-Two real targets mirror the two-backend canon's edge tier:
-  WoSHwinfoSampler   -> Snapdragon X Elite Copilot+ PC  (D4 candidate A)
-  AndroidAdbSampler  -> Snapdragon 8 Elite phone/QRD     (D4 candidate B)
-
-A sampler runs on a background thread at a fixed poll interval, timestamps
-every reading, and returns the trace. bench.py integrates the trace.
+Grounding:
+  - E_token = ∫P(t)dt / N, mJ, idle baseline subtracted        Profiling Guide §"Energy-per-Token"
+  - WoS: HWiNFO_SENS_SM2 shared mem, two-pass NPU isolation     DR1 §"Isolating the Hexagon NPU Power Rail"
+  - struct offsets / mutex / magic                              DR1 §"Architecture of the HWiNFO_SENS_SM2 Segment"
+  - CSV fallback (Free Edition 12h shm cap)                     DR1 §"CSV-Export Fallback Architecture"
+  - Android: P=V·I from sysfs current_now × voltage_now         Profiling Guide §"Android OS APIs"
 """
 from __future__ import annotations
 
+import ctypes
+import mmap
 import subprocess
+import sys
 import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
+# ---- DR1: HWiNFO_SENS_SM2 binary layout ------------------------------------
+SM2_NAME = "Global\\HWiNFO_SENS_SM2"
+SM2_MUTEX = "Global\\HWiNFO_SM2_MUTEX"
+MAGIC = 0x53695748          # 'SiWH'
+MAGIC_SWAP = 0x48576953     # endianness-inverted guard, per DR1
+SENSOR_TYPE_POWER = 5       # type enum: 1=temp 5=power 6=MHz 7=%
+
+
+class HWiNFOHeader(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("magic", ctypes.c_uint32),                 # 0x00
+        ("version", ctypes.c_uint32),               # 0x04
+        ("revision", ctypes.c_uint32),              # 0x08
+        ("poll_time", ctypes.c_int64),              # 0x0C
+        ("sensor_section_offset", ctypes.c_uint32), # 0x14
+        ("sensor_element_size", ctypes.c_uint32),   # 0x18  (264)
+        ("sensor_element_count", ctypes.c_uint32),  # 0x1C
+        ("entry_section_offset", ctypes.c_uint32),  # 0x20
+        ("entry_element_size", ctypes.c_uint32),    # 0x24  (316)
+        ("entry_element_count", ctypes.c_uint32),   # 0x28
+        ("polling_period", ctypes.c_uint32),        # 0x2C
+    ]
+
+
+class HWiNFOSensor(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("id", ctypes.c_uint32),                    # 0x00
+        ("instance", ctypes.c_uint32),              # 0x04
+        ("name_original", ctypes.c_char * 128),     # 0x08
+        ("name_user", ctypes.c_char * 128),         # 0x88
+    ]                                               # = 264 bytes
+
+
+class HWiNFOEntry(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("type", ctypes.c_uint32),                  # 0x00  (5 = power)
+        ("sensor_index", ctypes.c_uint32),          # 0x04  -> HWiNFOSensor[]
+        ("id", ctypes.c_uint32),                    # 0x08
+        ("name_original", ctypes.c_char * 128),     # 0x0C
+        ("name_user", ctypes.c_char * 128),         # 0x8C
+        ("unit", ctypes.c_char * 16),               # 0x10C
+        ("value", ctypes.c_double),                 # 0x11C
+        ("value_min", ctypes.c_double),             # 0x124
+        ("value_max", ctypes.c_double),             # 0x12C
+        ("value_avg", ctypes.c_double),             # 0x134
+    ]                                               # = 316 bytes
+
+
+def _cstr(b: bytes) -> str:
+    return b.split(b"\x00", 1)[0].decode("utf-8", "replace").strip()
+
+
+def parse_npu_power(buf, sensor_match=("Hexagon NPU", "Snapdragon"),
+                    entry_match="Power") -> float:
+    """Pure two-pass parser over a SENS_SM2 byte buffer. OS-independent and unit-
+    tested off-target. Returns instantaneous NPU watts.
+
+    Pass 1: find the sensor whose name_original substring-matches the NPU.
+    Pass 2: entry where sensor_index==target AND type==POWER AND unit=='W'.
+    value_max is also available for sub-poll-interval transient spikes (DR1).
+    """
+    hdr = HWiNFOHeader.from_buffer_copy(buf[: ctypes.sizeof(HWiNFOHeader)])
+    if hdr.magic not in (MAGIC, MAGIC_SWAP):
+        raise ValueError(f"bad SENS_SM2 magic 0x{hdr.magic:08X}")
+
+    target = None
+    for i in range(hdr.sensor_element_count):
+        off = hdr.sensor_section_offset + i * hdr.sensor_element_size
+        s = HWiNFOSensor.from_buffer_copy(buf[off: off + ctypes.sizeof(HWiNFOSensor)])
+        name = _cstr(s.name_original)
+        if any(m.lower() in name.lower() for m in sensor_match):
+            target = i
+            break
+    if target is None:
+        raise LookupError("no Hexagon NPU sensor in SENS_SM2")
+
+    for j in range(hdr.entry_element_count):
+        off = hdr.entry_section_offset + j * hdr.entry_element_size
+        e = HWiNFOEntry.from_buffer_copy(buf[off: off + ctypes.sizeof(HWiNFOEntry)])
+        if (e.sensor_index == target and e.type == SENSOR_TYPE_POWER
+                and _cstr(e.unit) == "W" and entry_match.lower() in _cstr(e.name_original).lower()):
+            return float(e.value)
+    raise LookupError("no NPU power(W) entry for matched sensor")
+
 
 @dataclass
 class PowerSample:
-    t: float          # perf_counter seconds
+    t: float
     watts: float
 
 
@@ -36,17 +119,11 @@ class PowerTrace:
     samples: list[PowerSample] = field(default_factory=list)
 
     def energy_joules(self, baseline_w: float = 0.0) -> float:
-        """Trapezoidal ∫P(t)dt with idle baseline subtracted. Clamps at 0 so a
-        noisy sub-baseline reading can't credit negative energy."""
         s = self.samples
         if len(s) < 2:
             return 0.0
-        e = 0.0
-        for a, b in zip(s, s[1:]):
-            dt = b.t - a.t
-            p = ((a.watts + b.watts) / 2.0) - baseline_w
-            e += max(p, 0.0) * dt
-        return e
+        return sum(max(((a.watts + b.watts) / 2.0) - baseline_w, 0.0) * (b.t - a.t)
+                   for a, b in zip(s, s[1:]))
 
     def avg_watts(self) -> float:
         return sum(x.watts for x in self.samples) / len(self.samples) if self.samples else 0.0
@@ -56,11 +133,8 @@ class PowerTrace:
 
 
 class PowerSampler(ABC):
-    """Poll instantaneous system power on a background thread. Context-manager:
-    `with sampler: <run inference>`; trace is available after exit."""
-
     def __init__(self, poll_hz: float = 5.0):
-        self.poll_interval = 1.0 / poll_hz   # 5 Hz = 200 ms; guide cites 100–500 ms
+        self.poll_interval = 1.0 / poll_hz
         self.trace = PowerTrace()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -68,41 +142,96 @@ class PowerSampler(ABC):
     @abstractmethod
     def read_watts(self) -> float: ...
 
-    def _loop(self) -> None:
+    def _loop(self):
         while not self._stop.is_set():
             try:
                 self.trace.samples.append(PowerSample(time.perf_counter(), self.read_watts()))
             except Exception:
-                pass  # never let a telemetry hiccup kill the inference being measured
+                pass
             time.sleep(self.poll_interval)
 
-    def __enter__(self) -> "PowerSampler":
+    def __enter__(self):
         self.trace = PowerTrace()
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
         return self
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, *exc):
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=2.0)
 
     def measure_baseline(self, seconds: float = 3.0) -> float:
-        """Idle floor: screen on, no inference. Call BEFORE the gate run."""
         with self:
             time.sleep(seconds)
         return self.trace.avg_watts()
 
 
-class AndroidAdbSampler(PowerSampler):
-    """Snapdragon 8 Elite phone over ADB. Reads sysfs power_supply rails — works
-    headless from the laptop host driving the QRD, no on-device app needed.
+class WoSHwinfoSampler(PowerSampler):
+    """Snapdragon X/X2 Elite Copilot+ PC. Real mmap + Win32 mutex per DR1.
+    Mutex hold is mandatory: skipping it yields torn doubles (megawatt/kilo-°C
+    garbage). Windows-only — raises elsewhere so the Linux dev box stays clean."""
+    def __init__(self, poll_hz: float = 5.0, mutex_timeout_ms: int = 500):
+        super().__init__(poll_hz)
+        if not sys.platform.startswith("win"):
+            raise RuntimeError("WoSHwinfoSampler requires Windows on Snapdragon; "
+                               "use CsvFallbackSampler or AndroidAdbSampler off-target.")
+        self._k32 = ctypes.windll.kernel32
+        self._k32.OpenMutexW.restype = ctypes.c_void_p
+        self._k32.OpenMutexW.argtypes = [ctypes.c_uint32, ctypes.c_bool, ctypes.c_wchar_p]
+        self._timeout = mutex_timeout_ms
+        SYNCHRONIZE = 0x00100000
+        self._mutex = self._k32.OpenMutexW(SYNCHRONIZE, False, SM2_MUTEX)
+        self._mm = mmap.mmap(-1, 0, tagname=SM2_NAME, access=mmap.ACCESS_READ)
 
-    current_now is µA, voltage_now is µV on mainline; sign convention varies by
-    OEM (discharge may be negative). We take |I| since we only want magnitude of
-    draw during a controlled inference burst.
-    """
+    def read_watts(self) -> float:
+        got = False
+        if self._mutex:
+            got = self._k32.WaitForSingleObject(ctypes.c_void_p(self._mutex), self._timeout) == 0
+        try:
+            self._mm.seek(0)
+            buf = self._mm.read(self._mm.size())
+            return parse_npu_power(buf)
+        finally:
+            if got:
+                self._k32.ReleaseMutex(ctypes.c_void_p(self._mutex))
+
+
+class CsvFallbackSampler(PowerSampler):
+    """DR1 fallback: HWiNFO Free shm caps at 12h. Tail the continuous CSV export.
+    Fuzzy-matches the 'Hexagon NPU [Power]'-style column so user relabeling in the
+    HWiNFO GUI doesn't silently break the mapping. Works on any OS for replay."""
+    def __init__(self, csv_path: str, col_match=("hexagon", "npu", "power"), poll_hz: float = 2.0):
+        super().__init__(poll_hz)
+        self._path = csv_path
+        self._col_match = col_match
+        self._col = None
+
+    def _resolve_col(self, header: list[str]) -> int:
+        for i, h in enumerate(header):
+            hl = h.lower()
+            if all(m in hl for m in self._col_match):
+                return i
+        raise LookupError(f"no column matching {self._col_match} in CSV header")
+
+    def read_watts(self) -> float:
+        with open(self._path, "r", errors="ignore") as f:
+            lines = f.readlines()
+        if len(lines) < 2:
+            return 0.0
+        cols = lines[0].rstrip("\n").split(",")
+        if self._col is None:
+            self._col = self._resolve_col(cols)
+        last = lines[-1].rstrip("\n").split(",")
+        try:
+            return float(last[self._col])
+        except (IndexError, ValueError):
+            return 0.0
+
+
+class AndroidAdbSampler(PowerSampler):
+    """Snapdragon 8 Elite phone over ADB sysfs — headless from the laptop host."""
     CUR = "/sys/class/power_supply/battery/current_now"
     VOLT = "/sys/class/power_supply/battery/voltage_now"
 
@@ -116,41 +245,15 @@ class AndroidAdbSampler(PowerSampler):
         return int(out.stdout.strip())
 
     def read_watts(self) -> float:
-        i_a = abs(self._cat(self.CUR)) / 1e6   # µA -> A
-        v_v = self._cat(self.VOLT) / 1e6       # µV -> V
-        return i_a * v_v
+        return (abs(self._cat(self.CUR)) / 1e6) * (self._cat(self.VOLT) / 1e6)
 
     def thermal_c(self, zone: str = "thermal_zone0") -> float:
         out = subprocess.run(self._pfx + ["shell", "cat", f"/sys/class/thermal/{zone}/temp"],
                              capture_output=True, text=True, timeout=2.0)
         raw = int(out.stdout.strip())
-        return raw / 1000.0 if raw > 1000 else float(raw)  # milli-°C on most kernels
-
-
-class WoSHwinfoSampler(PowerSampler):
-    """Snapdragon X Elite Copilot+ PC. HWiNFO64 publishes per-rail sensors into a
-    shared-memory segment (Global\\HWiNFO_SENS_SM2). We match a sensor by label
-    substring (e.g. 'NPU Power', 'CPU Power', 'System Power').
-
-    GAP: the SM2 struct offset layout is not in either reference doc. Until the
-    deep-research prompt below resolves the exact reading order, pass an explicit
-    `reader` callable (e.g. a thin pybind over the HWiNFO SDK or a parsed CSV log
-    export) so the harness is unblocked and the rail wiring is the only TODO.
-    """
-    def __init__(self, reader, label: str = "NPU Power", poll_hz: float = 5.0):
-        super().__init__(poll_hz)
-        self._reader = reader        # callable(label:str)->watts
-        self._label = label
-
-    def read_watts(self) -> float:
-        return float(self._reader(self._label))
+        return raw / 1000.0 if raw > 1000 else float(raw)
 
 
 def get_sampler(target: str, **kw) -> PowerSampler:
-    """target ∈ {'android','wos'} — keep call sites device-agnostic so bench.py
-    runs identically across the D4 candidate devices."""
-    if target == "android":
-        return AndroidAdbSampler(**kw)
-    if target == "wos":
-        return WoSHwinfoSampler(**kw)
-    raise ValueError(f"unknown power target: {target}")
+    return {"android": AndroidAdbSampler, "wos": WoSHwinfoSampler,
+            "csv": CsvFallbackSampler}[target](**kw)
