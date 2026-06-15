@@ -6,15 +6,22 @@ The learned routing brain. Fills the seam the CTO froze:
     harp_contract.Router._select -> "CAIO's learned policy slots in at _decide later"
 
 Doctrine (grounded, not assumed):
-  - NEVER route on raw argmax/softmax. Calibrate first, threshold second.
+  - Router BASE = mmBERT-small, ENCODER-only, ~140 MB INT8 (heads FP16).
+    DR-1 (Sub-1B NPU Compilation) is decisive: decoder routers (Qwen3-0.6B,
+    Arch-Router-1.5B) are memory-bandwidth-bound at 50-150 ms TTFT on Hexagon
+    and need a statically-allocated KV cache. Only a stateless single-pass
+    encoder breaks the <10 ms always-resident barrier. The head emits a binary
+    {local, escalate} hardness score; uncertainty u(x) = P(escalate) from that
+    head, NOT a decode-time per-token margin.
+  - NEVER route on raw argmax. Calibrate first, threshold second.
       -> LLM Routing & Cascade Classifiers V2 §"Calibrated Uncertainty"
   - Asymmetric risk: under-routing (a hard query sent to the SLM) is the
     dangerous failure; over-routing only wastes cloud cost. Gate is tuned to
     BOUND under-routing at alpha via a conformal threshold.
       -> V2 §"Conformal Prediction and Strict Marginal Guarantees"
-  - Two-stage signal: cheap per-token margin uncertainty u(x) from the sub-1B
-    router head -> isotonic map to a real error probability p_err (for logging /
-    cost-optimal threshold) -> conformal delta as the actual escalation gate.
+  - Two-stage signal: encoder hardness score u(x) -> isotonic map to a real
+    edge-error probability p_err (for logging / cost-optimal threshold) ->
+    conformal delta as the actual escalation gate.
       -> V2 §"Isotonic Regression and the UCCI Framework"
 
 Separation of concerns vs the frozen contract:
@@ -22,13 +29,13 @@ Separation of concerns vs the frozen contract:
   - harp_contract.Router._select keeps the HARDWARE/CONNECTIVITY guard
     (offline, npu_present, modality coverage). We do not duplicate or fight it.
 
-Integration without touching the freeze:
-  - Planner emits PlanStep.decision = ESCALATE only when it is STRUCTURALLY
-    certain a step needs the cloud (e.g. a deep-reason step). LOCAL is the
-    "router, you decide" default. PolicyRouter upgrades LOCAL->ESCALATE when the
-    calibrated gate fires; it never downgrades a planner ESCALATE.
-  - Proposed contract delta (CTO sign-off): add RouteDecision.AUTO so the
-    planner can express "undecided" explicitly instead of overloading LOCAL.
+Integration (RATIFIED — RouteDecision.AUTO approved by CTO):
+  - The NAT ReWOO planner emits PlanStep.decision = AUTO ("undecided") for every
+    step whose tier it defers (DR-4: this is NAT's native idiom). It pins
+    ESCALATE only when structurally certain (a deep-reason step), and LOCAL only
+    when it must stay on-device (privacy). PolicyRouter resolves AUTO via the
+    calibrated gate; it never overrides a planner pin. The base-class hardware
+    guard still has final say.
 """
 
 from __future__ import annotations
@@ -162,9 +169,10 @@ _TRIVIAL = re.compile(
 
 
 def mock_score_fn(query: str) -> float:
-    """Stand-in for the sub-1B router head's per-token margin uncertainty u(x).
-    Deterministic so the gate is testable today; CEE swaps in the QNN-EP head.
-    Heuristic: longer + reasoning-marker queries read as higher uncertainty."""
+    """Stand-in for the mmBERT-small encoder head's hardness score u(x) = P(escalate),
+    a single-pass classification output (NOT a decode-time margin — see DR-1).
+    Deterministic so the gate is testable today; CEE swaps in the QNN-EP encoder.
+    Heuristic: longer + reasoning-marker queries read as higher hardness."""
     q = query.lower()
     base = min(len(query) / 400.0, 0.6)
     markers = ("prove", "derive", "why", "design", "optimi", "step by step",
@@ -254,7 +262,9 @@ class PolicyRouter(Router):
         self.policy = policy
 
     async def _select(self, step: PlanStep) -> Backend:
-        if step.decision == RouteDecision.LOCAL:        # planner left it to us
+        # Planner pins (LOCAL/ESCALATE) are respected as-is. Only AUTO ("undecided",
+        # the NAT ReWOO default) is resolved by the calibrated policy.
+        if step.decision == RouteDecision.AUTO:
             cap: Capability = await self.edge.capabilities()
             f = RoutingFeatures(
                 query=step.prompt,
@@ -266,9 +276,13 @@ class PolicyRouter(Router):
                 approx_tokens=max(1, len(step.prompt) // 4),
             )
             verdict = self.policy.decide(f)
-            if verdict.decision == RouteDecision.ESCALATE and self.online:
-                return self.cloud
-        return await super()._select(step)              # hardware/offline guard, final say
+            resolved = PlanStep(
+                step_id=step.step_id, modality=step.modality,
+                decision=verdict.decision, model_id=step.model_id,
+                prompt=step.prompt, depends_on=step.depends_on,
+            )
+            return await super()._select(resolved)      # hardware/offline guard, final say
+        return await super()._select(step)
 
 
 # ---------------------------------------------------------------- self-test (Risk B shape)
@@ -310,5 +324,33 @@ def _selftest() -> None:
           f"(gate budget: <50ms, target 0 silent mis-routes)")
 
 
+async def _integration_test() -> None:
+    """Prove AUTO resolves through the real contract Router, and planner pins
+    are honored. Uses the contract's mock backends."""
+    import asyncio
+    from shared.harp_contract import mock_edge, mock_cloud
+
+    cal_u = [i / 200.0 for i in range(200)]
+    cal_err = [1 if (i % 100) / 100.0 < cal_u[i] else 0 for i in range(200)]
+    pol = RoutingPolicy().calibrate(cal_u, cal_err)
+    pr = PolicyRouter(mock_edge(), mock_cloud(), pol, online=True)
+
+    cases = [
+        PlanStep("a1", Modality.TEXT, RouteDecision.AUTO, "qwen3-4b", "what time is it"),
+        PlanStep("a2", Modality.TEXT, RouteDecision.AUTO, "qwen3-4b",
+                 "design a multi-agent planner and derive its latency budget step by step"),
+        PlanStep("p1", Modality.TEXT, RouteDecision.LOCAL, "qwen3-4b",
+                 "design a multi-agent planner ... (planner-pinned LOCAL, privacy)"),
+        PlanStep("p2", Modality.TEXT, RouteDecision.ESCALATE, "nemotron", "deep reason"),
+    ]
+    print("\n== PolicyRouter: AUTO resolved, pins honored ==")
+    for st in cases:
+        backend = await pr._select(st)
+        tier = (await backend.capabilities()).tier.value
+        print(f"  {st.step_id} in={st.decision.value:9} -> {tier}")
+
+
 if __name__ == "__main__":
+    import asyncio
     _selftest()
+    asyncio.run(_integration_test())
