@@ -2,20 +2,23 @@ name: CI Contract Regression Gate
 
 on:
   push:
-    branches:
-      - main
-      - develop
+    branches: [main, develop]
     paths:
       - 'shared/**'
+      - 'edge/**'        # a real QNNBackend that breaks the ABC must fail here
+      - 'cloud/**'       # likewise NIMBackend
+      - 'router/**'
+      - 'fabric/**'
       - '.github/workflows/ci.yml'
   pull_request:
-    branches:
-      - main
-      - develop
+    branches: [main, develop]
     paths:
       - 'shared/**'
+      - 'edge/**'
+      - 'cloud/**'
+      - 'router/**'
+      - 'fabric/**'
 
-# Automatically cancel out-of-date runs if a developer pushes new commits rapidly
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -24,31 +27,35 @@ jobs:
   contract-gate:
     name: Verify Integration Contract
     runs-on: ubuntu-latest
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python Runtime
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # Matches your stable standard runtime
+          python-version: '3.11'
 
-      - name: Verify Package Layout
+      - name: Verify package layout
         run: |
-          # Ensure Python handles relative imports cleanly by verifying structure
-          if [ ! -f "shared/__init__.py" ]; then
-            echo "::warning file=shared/__init__.py::Missing __init__.py in shared directory. Creating it temporarily for isolation testing."
-            touch shared/__init__.py
-          fi
+          for pkg in shared fabric; do
+            if [ -d "$pkg" ] && [ ! -f "$pkg/__init__.py" ]; then
+              echo "::warning::Creating $pkg/__init__.py for isolation testing"
+              touch "$pkg/__init__.py"
+            fi
+          done
 
-      - name: Run Smoke Test Gate
-        run: |
-          # Directly invokes your explicit test mandate from the project root
-          python -c "import asyncio; from shared.harp_contract import _smoke; asyncio.run(_smoke())"
+      - name: Gate 1 — contract smoke test (swap / offline / metrics)
+        run: python -c "import asyncio; from shared.harp_contract import _smoke; asyncio.run(_smoke())"
 
-      - name: Catch Contract Structural Breaks
+      - name: Gate 2 — backend conformance (real backends must satisfy the ABC)
+        run: python -m shared.conformance
+
+      - name: Gate 3 — fabric four-state offline queue
+        if: ${{ hashFiles('fabric/sync_queue.py') != '' }}
+        run: python -m fabric.sync_queue
+
+      - name: Contract break diagnostics
         if: failure()
         run: |
-          echo "::error::The integration spine contract in 'shared/harp_contract.py' has been broken."
-          echo "::error::Changes to abstract types, Enums, or PlanGraph DAG sorting require explicit CTO sign-off."
+          echo "::error::Integration spine broken. Changes to the Backend ABC,"
+          echo "::error::shared enums, PlanGraph DAG ordering, or the SyncState FSM"
+          echo "::error::require explicit CTO sign-off before merge."
