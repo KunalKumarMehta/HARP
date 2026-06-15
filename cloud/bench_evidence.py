@@ -1,0 +1,117 @@
+"""
+HARP — Hardware-Aware Routing Platform
+cloud/bench_evidence.py  ·  CCE owns this  ·  MIT
+
+The NVIDIA scoring metric, operationalized. NVIDIA Open Hackathon rewards a
+real workload OPTIMIZED on their stack with a quantified delta. This harness
+drives the contract's profile() against two configs (baseline vs optimized),
+computes the GenAI-Perf metric family, and prints the judge-facing evidence
+table + the framing lines that map metrics -> business value.
+
+Grounding (NVIDIA LLM Hackathon Optimization Strategy doc):
+  - TTFT = first CONTENT token; ITL = (e2e - TTFT)/(out_tokens - 1)
+  - "goodput" = throughput under a fixed latency SLA (TTFT ceiling)  <- the metric judges actually care about
+  - Narrative hooks: roofline (memory- vs compute-bound), TCO (3x TPS at same SLA = 1/3 the GPUs)
+  - Real sweep is `genai-perf analyze --sweep-type concurrency` on the deployed
+    TRT-LLM engine in Triton; this harness is the in-process pre-flight + the
+    table generator. Final numbers come from GenAI-Perf on the GPU box.
+
+Runs against the mock cloud backend today (no GPU needed) so the evidence
+pipeline is built and tested before the real NIM/TRT-LLM engine is provisioned.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import statistics
+from dataclasses import dataclass
+
+from shared.harp_contract import Backend, InferRequest, Modality, mock_cloud
+
+# Interactive-agent SLA: TTFT ceiling for fluid tool-use (per optimization doc).
+TTFT_SLA_MS = 500.0
+
+
+@dataclass
+class BenchResult:
+    label: str
+    ttft_ms_p50: float
+    ttft_ms_p99: float
+    tok_s_mean: float
+    n_runs: int
+    sla_pass_rate: float        # fraction of runs under TTFT_SLA_MS == goodput proxy
+
+    def speedup_vs(self, base: "BenchResult") -> tuple[float, float]:
+        ttft_x = base.ttft_ms_p50 / self.ttft_ms_p50 if self.ttft_ms_p50 else 0.0
+        tps_x = self.tok_s_mean / base.tok_s_mean if base.tok_s_mean else 0.0
+        return ttft_x, tps_x
+
+
+async def run_config(be: Backend, label: str, req: InferRequest, runs: int = 12) -> BenchResult:
+    """Drive profile() N times, aggregate GenAI-Perf-style percentiles. Warm-up
+    run discarded (TRT-LLM/JIT warm path skew, per doc)."""
+    await be.profile(req)  # warm-up, discarded
+    ttfts: list[float] = []
+    tok_s: list[float] = []
+    passes = 0
+    for _ in range(runs):
+        m = await be.profile(req)
+        ttfts.append(m.ttft_ms)
+        tok_s.append(m.tokens_per_s)
+        if m.ttft_ms <= TTFT_SLA_MS:
+            passes += 1
+    ttfts.sort()
+    p99 = ttfts[min(len(ttfts) - 1, int(0.99 * len(ttfts)))]
+    return BenchResult(
+        label=label,
+        ttft_ms_p50=statistics.median(ttfts),
+        ttft_ms_p99=p99,
+        tok_s_mean=statistics.fmean(tok_s),
+        n_runs=runs,
+        sla_pass_rate=passes / runs,
+    )
+
+
+def render_pack(base: BenchResult, opt: BenchResult) -> str:
+    ttft_x, tps_x = opt.speedup_vs(base)
+    gpu_fraction = (1.0 / tps_x) if tps_x else float("inf")
+    lines = [
+        "================ NVIDIA EVIDENCE PACK (cloud planner workload) ================",
+        f"{'metric':<22}{'baseline':>14}{'optimized':>14}{'delta':>12}",
+        "-" * 62,
+        f"{'TTFT p50 (ms)':<22}{base.ttft_ms_p50:>14.1f}{opt.ttft_ms_p50:>14.1f}{ttft_x:>11.2f}x",
+        f"{'TTFT p99 (ms)':<22}{base.ttft_ms_p99:>14.1f}{opt.ttft_ms_p99:>14.1f}{'':>12}",
+        f"{'throughput (tok/s)':<22}{base.tok_s_mean:>14.1f}{opt.tok_s_mean:>14.1f}{tps_x:>11.2f}x",
+        f"{'goodput @SLA<%dms' % TTFT_SLA_MS:<22}{base.sla_pass_rate:>13.0%}{opt.sla_pass_rate:>14.0%}{'':>12}",
+        "-" * 62,
+        "JUDGE FRAMING (fill with real GenAI-Perf numbers on the GPU box):",
+        f"  • Latency: {ttft_x:.1f}x faster time-to-first-token under identical workload.",
+        f"  • Throughput: {tps_x:.1f}x tokens/s at the same TTFT SLA (this is goodput, not raw TPS).",
+        f"  • TCO: {tps_x:.1f}x goodput => ~{gpu_fraction:.2f} of the GPU fleet for equal concurrent users.",
+        "  • Roofline: decode shifted from memory-bandwidth-bound toward peak HBM BW",
+        "    via Paged KV + in-flight batching (prove with Nsight Compute on the box).",
+        "  • Safety with no latency tax: NeMo Guardrails stream_first=True, parallel",
+        "    output rails (content_safety + pii) on 128-tok chunks.",
+        "==============================================================================",
+        "NEXT (real numbers): genai-perf analyze -m <model> --backend tensorrtllm \\",
+        "  --endpoint-type chat --sweep-type concurrency --sweep-range 1:256 \\",
+        "  --synthetic-input-tokens-mean 2000 --output-tokens-mean 500",
+    ]
+    return "\n".join(lines)
+
+
+async def _demo() -> None:
+    req = InferRequest(
+        messages=[{"role": "user", "content": "deep-reason this multi-step plan and emit a decision graph"}],
+        model_id="nemotron-planner",
+        modality=Modality.TEXT,
+    )
+    # Baseline = mock cloud as-is. "Optimized" stub = same mock (delta ~1x here);
+    # on the GPU box, baseline=HF/PyTorch NIM-off, optimized=TRT-LLM engine in Triton.
+    base = await run_config(mock_cloud(), "baseline (pre-TRT-LLM)", req)
+    opt = await run_config(mock_cloud(), "optimized (TRT-LLM/Triton)", req)
+    print(render_pack(base, opt))
+
+
+if __name__ == "__main__":
+    asyncio.run(_demo())
