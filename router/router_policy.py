@@ -38,7 +38,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Sequence, AsyncIterator
 
-from harp_contract import (
+from shared.harp_contract import (
     Backend, Capability, Modality, PlanStep, RouteDecision, Router,
 )
 

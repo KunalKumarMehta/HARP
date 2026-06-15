@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 
 # Import the frozen contract. In-repo this is `from shared.harp_contract import ...`
-from harp_contract import (
+from shared.harp_contract import (
     Backend, Capability, InferRequest, Metrics, Modality, Tier,
 )
 
