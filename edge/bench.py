@@ -18,7 +18,7 @@ import json
 import time
 from dataclasses import asdict, dataclass
 
-from harp_contract import InferRequest, Metrics, Modality
+from shared.harp_contract import InferRequest, Metrics, Modality
 from qnn_backend import QNNBackend, QnnModelSpec
 
 
