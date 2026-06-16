@@ -3,21 +3,10 @@ name: CI Contract Regression Gate
 on:
   push:
     branches: [main, develop]
-    paths:
-      - 'shared/**'
-      - 'edge/**'        # a real QNNBackend that breaks the ABC must fail here
-      - 'cloud/**'       # likewise NIMBackend
-      - 'router/**'
-      - 'fabric/**'
-      - '.github/workflows/ci.yml'
+    paths: ['shared/**','edge/**','cloud/**','router/**','fabric/**','tests/**','.github/workflows/ci.yml']
   pull_request:
     branches: [main, develop]
-    paths:
-      - 'shared/**'
-      - 'edge/**'
-      - 'cloud/**'
-      - 'router/**'
-      - 'fabric/**'
+    paths: ['shared/**','edge/**','cloud/**','router/**','fabric/**','tests/**']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -29,33 +18,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Verify package layout
+      - name: Install fabric transport dep
+        run: pip install "websockets>=13"
+
+      - name: Ensure package markers
         run: |
-          for pkg in shared fabric; do
-            if [ -d "$pkg" ] && [ ! -f "$pkg/__init__.py" ]; then
-              echo "::warning::Creating $pkg/__init__.py for isolation testing"
-              touch "$pkg/__init__.py"
-            fi
+          for pkg in shared router fabric tests; do
+            [ -d "$pkg" ] && [ ! -f "$pkg/__init__.py" ] && touch "$pkg/__init__.py" || true
           done
 
-      - name: Gate 1 — contract smoke test (swap / offline / metrics)
+      - name: Gate 1 — contract smoke (swap / offline / metrics)
         run: python -c "import asyncio; from shared.harp_contract import _smoke; asyncio.run(_smoke())"
 
-      - name: Gate 2 — backend conformance (real backends must satisfy the ABC)
+      - name: Gate 2 — backend conformance (ABC)
         run: python -m shared.conformance
 
       - name: Gate 3 — fabric four-state offline queue
-        if: ${{ hashFiles('fabric/sync_queue.py') != '' }}
         run: python -m fabric.sync_queue
+
+      - name: Gate 4 — end-to-end PolicyRouter (AUTO resolution + pins + fail-closed)
+        run: python -m tests.e2e_smoke
+
+      - name: Gate 5 — fabric WS round-trip (drop -> reconnect -> idempotent redelivery)
+        run: python -m tests.ws_roundtrip
 
       - name: Contract break diagnostics
         if: failure()
         run: |
-          echo "::error::Integration spine broken. Changes to the Backend ABC,"
-          echo "::error::shared enums, PlanGraph DAG ordering, or the SyncState FSM"
-          echo "::error::require explicit CTO sign-off before merge."
+          echo "::error::Integration spine broken. Backend ABC, shared enums (incl."
+          echo "::error::RouteDecision.AUTO), PlanGraph ordering, SyncState FSM, or the"
+          echo "::error::routing/transport contracts changed. Requires CTO sign-off."
