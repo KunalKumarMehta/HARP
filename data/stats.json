@@ -1,0 +1,35 @@
+{
+  "split": {
+    "train": 3200,
+    "val": 400,
+    "test": 400
+  },
+  "stats": {
+    "n": 4000,
+    "escalate": 1766,
+    "local": 2234,
+    "escalate_frac": 0.4415,
+    "imbalance_ratio": 1.27,
+    "class_weights": {
+      "local": 0.8953,
+      "escalate": 1.1325
+    },
+    "verifiable_frac": 0.5375,
+    "cna_cloud_ceiling": 0.9279,
+    "edge_solo_accuracy": 0.6544,
+    "collapse_guard": "PASS"
+  },
+  "tokenizer": "mmbert-small",
+  "max_len": 512,
+  "label_map": {
+    "local": 0,
+    "escalate": 1
+  },
+  "train_recipe": {
+    "head": "binary sequence classification, FP16 head (DR-1)",
+    "loss": "weighted CE using per-row `weight` (or focal, gamma=2)",
+    "peft": "LoRA r=16 a=32 on attention proj; encoder body W8A16 post-QAT",
+    "never": "vanilla CE (collapses to majority-local)",
+    "inference_backstop": "conformal gate in router_policy.py \u2014 never argmax"
+  }
+}
