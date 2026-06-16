@@ -1,0 +1,63 @@
+# HARP — cloud planner config  ·  NAT v1.7.0  ·  CCE owns  ·  MIT
+# Grounded against VERIFIED installed surface:
+#   - llm _type "nim"  -> nat.llm.nim_llm.NIMModelConfig(name="nim")
+#     real fields: model_name, base_url, api_key, temperature, top_p, max_tokens, thinking
+#   - rewoo_agent ships in a FRAMEWORK PLUGIN, not base nvidia-nat. Install the
+#     plugin that registers it (e.g. `pip install nvidia-nat-langchain`) before
+#     `nat run`. Base install will NOT resolve `_type: rewoo_agent`.
+#   - DAG extraction/suppression is done by our FunctionMiddleware (pre_invoke),
+#     registered separately — see dag_extractor_middleware.py.
+#
+# api_key resolves from env HARP_NIM_API_KEY at runtime (do not inline secrets).
+
+llms:
+  # MANAGER tier — the planner. Reasoning ON so it synthesizes the dependency DAG.
+  nim_planner:
+    _type: nim
+    model_name: nvidia/llama-3.3-nemotron-super-49b-v1.5   # registry MANAGER_PRAGMATIC; swap to nemotron-3-super-120b-a12b for hard plans
+    base_url: https://integrate.api.nvidia.com/v1
+    temperature: 0.1
+    max_tokens: 4096
+    thinking: true                # enable_thinking — exposes CoT for DAG synthesis
+
+  # WORKER tier — cloud solver / sub-agent. Reasoning OFF for low-latency factual synthesis.
+  nim_solver:
+    _type: nim
+    model_name: nvidia/nemotron-3-nano-30b-a3b            # registry WORKER_GENERAL
+    base_url: https://integrate.api.nvidia.com/v1
+    temperature: 0.0
+    max_tokens: 1024
+    thinking: false
+
+# Edge tools the planner is allowed to schedule. In full distributed mode these
+# are pulled from the edge device's MCP server; here declared so the planner's
+# schemas match the executor's real capabilities (CTODR-2: schemas must map 1:1).
+functions:
+  asr_transcribe:
+    _type: mcp_client            # edge MCP server hosts the real impl
+    description: "Transcribe an audio clip to text (edge ASR specialist)."
+  vision_screen:
+    _type: mcp_client
+    description: "Extract text/regions from an image or screen (edge vision specialist)."
+  text_summarize:
+    _type: mcp_client
+    description: "Summarize text (edge text specialist)."
+  deep_reason:
+    _type: mcp_client
+    description: "Deep multi-step reasoning over a summary (escalates to cloud Manager)."
+
+# ReWOO planner. Plan-Execute-Solve. Our middleware intercepts at the Planner->
+# Executor boundary and emits the DAG, so the local Executor never fires.
+workflow:
+  _type: rewoo_agent            # provided by the installed framework plugin
+  planner_llm: nim_planner
+  solver_llm: nim_solver
+  tool_names: [asr_transcribe, vision_screen, text_summarize, deep_reason]
+  tool_call_max_retries: 3
+  raise_tool_call_error: true
+  # Force the Planner Node to emit our contract DAG as strict JSON and stop.
+  additional_planner_instructions: >
+    Emit the execution plan as a STRICT JSON object and nothing else, matching:
+    {"plan_id": str, "nodes": [{"id": str, "tool": str, "args": str,
+    "deps": [str], "hint": "edge"|"cloud"|null}]}. Use only the provided tool
+    names. Mark deep_reason nodes hint="cloud". Do not execute any tool.
