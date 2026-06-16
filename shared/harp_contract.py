@@ -38,8 +38,11 @@ class Modality(str, Enum):
 
 
 class RouteDecision(str, Enum):
-    LOCAL = "local"
-    ESCALATE = "escalate"
+    LOCAL = "local"          # planner pin: keep on-device (e.g. privacy)
+    ESCALATE = "escalate"    # planner pin: force cloud (e.g. deep-reason step)
+    AUTO = "undecided"       # planner defers tier; edge PolicyRouter resolves via
+                             # calibrated gate. NAT ReWOO's native default idiom.
+                             # Base Router (no policy) treats AUTO as LOCAL.
 
 
 class SyncState(str, Enum):
@@ -169,6 +172,9 @@ class Router:
             return self.cloud
         if not edge_cap.npu_present or step.modality not in edge_cap.modalities:
             return self.cloud                      # capability fallback prevents OOM/crash
+        # LOCAL and AUTO both resolve here. The base router carries no policy, so an
+        # unresolved AUTO conservatively stays on-device; PolicyRouter overrides AUTO
+        # upstream of this guard before the step ever reaches the base class.
         return self.edge
 
 
