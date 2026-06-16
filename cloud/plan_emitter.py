@@ -78,8 +78,12 @@ def emit_plan_graph(plan_id: str, raw: list[RawReWOOStep]) -> PlanGraph:
     for r in raw:
         decision = _decision_for(r)
         modality, model_id = _bind(r, decision)
+        # Contract requires prompt: str. Never ship "" — synthesize the dataflow
+        # binding so the edge executor always has a concrete input handle.
+        prompt = (r.args or "").strip() or (
+            " + ".join(f"{d}_output" for d in r.deps) if r.deps else r.id + "_input")
         steps.append(PlanStep(step_id=r.id, modality=modality, decision=decision,
-                              model_id=model_id, prompt=r.args, depends_on=list(r.deps)))
+                              model_id=model_id, prompt=prompt, depends_on=list(r.deps)))
     g = PlanGraph(plan_id=plan_id, steps=steps)
     g.topo_order()      # reject cyclic plans at emit time
     return g
