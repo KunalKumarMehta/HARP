@@ -22,7 +22,7 @@ import re
 import sys
 
 from shared.harp_contract import PlanGraph
-from cloud.model_registry import Role
+from cloud.model_registry import Role, resolve
 from cloud.nim_backend import NIMBackend, NIMConfig
 from cloud.plan_emitter import RawReWOOStep, emit_plan_graph, to_wire, from_wire
 
@@ -45,7 +45,10 @@ def _planner_messages(user_request: str) -> list[dict]:
         "execution DAG using ONLY these tools:\n" + tool_lines + "\n\n"
         "Rules: parallelize independent steps (empty deps); chain dependent ones "
         "via deps (antecedent step ids). Mark deep_reason nodes hint=\"cloud\"; "
-        "perception/summary nodes hint=\"edge\". Output STRICT JSON only, no prose, "
+        "perception/summary nodes hint=\"edge\". EVERY node MUST have non-empty args: "
+        "either a literal instruction OR a dataflow reference to upstream outputs "
+        "in the form '<step_id>_output'; root nodes (no deps) reference the task input. "
+        "Output STRICT JSON only, no prose, "
         "no markdown fences, matching exactly:\n" + _SCHEMA
     )
     return [{"role": "system", "content": system},
@@ -69,14 +72,25 @@ def _extract_json(text: str) -> dict:
     raise ValueError("unbalanced JSON in planner output")
 
 
-def _to_raw(dag: dict) -> list[RawReWOOStep]:
+def _norm_args(node: dict, task_input: str) -> str:
+    """Never emit empty args. If the planner left args blank, synthesize the
+    dataflow binding the edge executor needs: upstream outputs for dependent
+    nodes, the task input for roots."""
+    a = (node.get("args") or "").strip()
+    if a:
+        return a
+    deps = node.get("deps") or []
+    return " + ".join(f"{d}_output" for d in deps) if deps else task_input
+
+
+def _to_raw(dag: dict, task_input: str) -> list[RawReWOOStep]:
     nodes = dag.get("nodes") or []
     if not nodes:
         raise ValueError("planner returned no nodes")
     bad = [n["tool"] for n in nodes if n["tool"] not in _TOOLS]
     if bad:
         raise ValueError(f"planner hallucinated unknown tools: {bad}")
-    return [RawReWOOStep(n["id"], n["tool"], n.get("args", ""),
+    return [RawReWOOStep(n["id"], n["tool"], _norm_args(n, task_input),
                          n.get("deps", []), n.get("hint")) for n in nodes]
 
 
@@ -85,17 +99,20 @@ async def emit(user_request: str, mock_output: str | None = None) -> PlanGraph:
         raw_text = mock_output
         plan_id = "plan-mock-1"
     else:
-        be = NIMBackend(NIMConfig(enable_thinking=True), role=Role.MANAGER_PRAGMATIC)
+        role = Role.MANAGER_PRAGMATIC
+        be = NIMBackend(NIMConfig(enable_thinking=True), role=role)   # thinking=True LOCKED: yields dataflow-wired DAG
+        from shared.harp_contract import InferRequest
         try:
             raw_text = "".join([t async for t in be.infer(
-                __import__("shared.harp_contract", fromlist=["InferRequest"]).InferRequest(
-                    messages=_planner_messages(user_request), model_id=None, max_tokens=2048))])
+                InferRequest(messages=_planner_messages(user_request),
+                             model_id=resolve(role).model_id,           # explicit, never ""
+                             max_tokens=2048))])
         finally:
             await be.aclose()
         plan_id = "plan-live-1"
     dag = _extract_json(raw_text)
     dag.setdefault("plan_id", plan_id)
-    graph = emit_plan_graph(dag["plan_id"], _to_raw(dag))
+    graph = emit_plan_graph(dag["plan_id"], _to_raw(dag, user_request))
     return graph
 
 
