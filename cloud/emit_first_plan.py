@@ -89,7 +89,7 @@ async def emit(user_request: str, mock_output: str | None = None) -> PlanGraph:
         try:
             raw_text = "".join([t async for t in be.infer(
                 __import__("shared.harp_contract", fromlist=["InferRequest"]).InferRequest(
-                    messages=_planner_messages(user_request), model_id="", max_tokens=2048))])
+                    messages=_planner_messages(user_request), model_id=None, max_tokens=2048))])
         finally:
             await be.aclose()
         plan_id = "plan-live-1"
