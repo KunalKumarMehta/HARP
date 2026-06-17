@@ -23,7 +23,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install fabric transport dep
-        run: pip install "websockets>=13"
+        run: pip install "websockets>=13" "jsonschema>=4"
 
       - name: Ensure package markers
         run: |
@@ -45,6 +45,9 @@ jobs:
 
       - name: Gate 5 — fabric WS round-trip (drop -> reconnect -> idempotent redelivery)
         run: python -m tests.ws_roundtrip
+
+      - name: Gate 6 — PlanGraph wire codec (schema + DAG integrity, round-trip)
+        run: python -m shared.plan_codec
 
       - name: Contract break diagnostics
         if: failure()
