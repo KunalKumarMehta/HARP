@@ -1,57 +1,188 @@
-name: CI Contract Regression Gate
+# HARP CI Pipeline — gates the 9 contract invariants from SDD §9
+# Runs on every push/PR. All jobs must pass for merge.
+
+name: HARP CI
 
 on:
   push:
-    branches: [main, develop]
-    paths: ['shared/**','edge/**','cloud/**','router/**','fabric/**','tests/**','.github/workflows/ci.yml']
+    branches: [main]
   pull_request:
-    branches: [main, develop]
-    paths: ['shared/**','edge/**','cloud/**','router/**','fabric/**','tests/**']
+    branches: [main]
+  workflow_dispatch: {}
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}
 
 jobs:
-  contract-gate:
-    name: Verify Integration Contract
+  # Gate 1: Contract smoke test (shared.harp_contract._smoke)
+  # Covers: FR1/FR2 backend swap, offline fail-closed, metrics
+  contract-smoke:
+    name: "Gate 1: Contract Smoke"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-
-      - name: Install fabric transport dep
-        run: pip install "websockets>=13" "jsonschema>=4"
-
-      - name: Ensure package markers
-        run: |
-          for pkg in shared router fabric tests; do
-            [ -d "$pkg" ] && [ ! -f "$pkg/__init__.py" ] && touch "$pkg/__init__.py" || true
-          done
-
-      - name: Gate 1 — contract smoke (swap / offline / metrics)
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install -q jsonschema websockets httpx
+      - name: Run contract smoke
         run: python -c "import asyncio; from shared.harp_contract import _smoke; asyncio.run(_smoke())"
 
-      - name: Gate 2 — backend conformance (ABC)
+  # Gate 2: ABC conformance (shared.conformance)
+  # Covers: FR1 Backend ABC conformance (mocks + any real backend)
+  conformance:
+    name: "Gate 2: ABC Conformance"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run conformance
         run: python -m shared.conformance
 
-      - name: Gate 3 — fabric four-state offline queue
+  # Gate 3: Four-state sync queue FSM (fabric.sync_queue)
+  # Covers: FR8 four-state FSM, crash recovery, conflict quarantine
+  sync-queue:
+    name: "Gate 3: Sync Queue FSM"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run sync queue test
         run: python -m fabric.sync_queue
 
-      - name: Gate 4 — end-to-end PolicyRouter (AUTO resolution + pins + fail-closed)
-        run: python -m tests.e2e_smoke
+  # Gate 4: E2E routing smoke (tests.e2e_smoke)
+  # Covers: FR2 AUTO calibration + pins + fail-closed
+  e2e-smoke:
+    name: "Gate 4: E2E Routing Smoke"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run e2e smoke
+        run: python tests/e2e_smoke.py
 
-      - name: Gate 5 — fabric WS round-trip (drop -> reconnect -> idempotent redelivery)
-        run: python -m tests.ws_roundtrip
+  # Gate 5: WS roundtrip (tests.ws_roundtrip)
+  # Covers: FR8 drop→reconnect→idempotent redelivery
+  ws-roundtrip:
+    name: "Gate 5: WS Roundtrip"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install websockets
+        run: pip install -q websockets
+      - name: Run WS roundtrip
+        run: python tests/ws_roundtrip.py
 
-      - name: Gate 6 — PlanGraph wire codec (schema + DAG integrity, round-trip)
+  # Gate 6: Plan codec (shared.plan_codec)
+  # Covers: FR3 schema + DAG validation, round-trip, 6 rejections
+  plan-codec:
+    name: "Gate 6: Plan Codec"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install jsonschema
+        run: pip install -q jsonschema
+      - name: Run plan codec
         run: python -m shared.plan_codec
 
-      - name: Contract break diagnostics
-        if: failure()
+  # Gate 7: Executor smoke (tests.executor_smoke)
+  # Covers: FR4 dataflow threading, failure-skip, boundary-safety, cycle reject
+  executor-smoke:
+    name: "Gate 7: Executor Smoke"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run executor smoke
+        run: python tests/executor_smoke.py
+
+  # Gate 8: Genie backend conformance (edge.genie_backend)
+  # Covers: FR5 Genie conformance + swarm discovery (off-device stub)
+  genie-backend:
+    name: "Gate 8: Genie Backend"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run genie backend
+        run: python -m edge.genie_backend
+
+  # Gate 9: Remote backend / multi-device (fabric.remote_backend)
+  # Covers: FR7 multi-device over real socket + truncation-raises
+  remote-backend:
+    name: "Gate 9: Remote Backend"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install websockets
+        run: pip install -q websockets
+      - name: Run remote backend
+        run: python -m fabric.remote_backend
+
+  # Full demo integration test (runs last, validates the whole spine)
+  demo-integration:
+    name: "Demo: Full Spine"
+    runs-on: ubuntu-latest
+    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install -q jsonschema websockets httpx
+      - name: Run demo (online, mocks)
+        run: python -m demo.run_demo
+      - name: Run demo (offline fail-closed)
+        run: python -m demo.run_demo --offline
+      - name: Run demo (distributed)
+        run: python -m demo.run_demo --distributed
+      - name: Run demo (genie forced)
+        run: python -m demo.run_demo --genie
+
+  # Summary gate — all must pass
+  all-gates:
+    name: "✅ All Gates Pass"
+    runs-on: ubuntu-latest
+    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend, demo-integration]
+    if: always()
+    steps:
+      - name: Check all gates
         run: |
-          echo "::error::Integration spine broken. Backend ABC, shared enums (incl."
-          echo "::error::RouteDecision.AUTO), PlanGraph ordering, SyncState FSM, or the"
-          echo "::error::routing/transport contracts changed. Requires CTO sign-off."
+          if [[ "${{ needs.contract-smoke.result }}" != "success" ]] ||
+             [[ "${{ needs.conformance.result }}" != "success" ]] ||
+             [[ "${{ needs.sync-queue.result }}" != "success" ]] ||
+             [[ "${{ needs.e2e-smoke.result }}" != "success" ]] ||
+             [[ "${{ needs.ws-roundtrip.result }}" != "success" ]] ||
+             [[ "${{ needs.plan-codec.result }}" != "success" ]] ||
+             [[ "${{ needs.executor-smoke.result }}" != "success" ]] ||
+             [[ "${{ needs.genie-backend.result }}" != "success" ]] ||
+             [[ "${{ needs.remote-backend.result }}" != "success" ]] ||
+             [[ "${{ needs.demo-integration.result }}" != "success" ]]; then
+            echo "::error::One or more gates failed"
+            exit 1
+          fi
+          echo "All 9 gates + demo integration passed"

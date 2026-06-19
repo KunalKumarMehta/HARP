@@ -1,17 +1,17 @@
 """
 HARP — Hardware-Aware Routing Platform
-cloud/nim_backend.py  ·  CCE owns this  ·  MIT  ·  v2 (verified against DR-1)
+cloud/nim_backend.py  ·  MIT
 
 Cloud half of the one-call swap. Implements shared/harp_contract.Backend over
-any OpenAI-compatible NIM endpoint. CTO's Router treats this identically to
-CEE's QNNBackend — negotiates Capability, calls infer()/profile(), never
+any OpenAI-compatible NIM endpoint. Router treats this identically to
+QNNBackend — negotiates Capability, calls infer()/profile(), never
 imports this class.
 
-VERIFIED (NVIDIA Nemotron NIM Specifications doc, June 2026):
+NIM API specification (NVIDIA Nemotron):
   - base: https://integrate.api.nvidia.com/v1 ; auth: Bearer $NVIDIA_API_KEY
   - reasoning models stream CoT on delta.reasoning_content, answer on delta.content
-    -> v1 dropped reasoning_content silently. FIXED: both handled; TTFT lands on
-       the FIRST token of EITHER stream (true first-generation instant).
+    Both are handled; TTFT lands on the FIRST token of EITHER stream (true
+    first-generation instant).
   - reasoning control via extra_body.chat_template_kwargs.enable_thinking +
     reasoning_budget / min_thinking_tokens
 No hardcoded model strings: model resolved by Role through model_registry.

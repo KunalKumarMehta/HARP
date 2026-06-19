@@ -1,9 +1,9 @@
 """
 HARP — Hardware-Aware Routing Platform
-cloud/mutation_handler.py  ·  CCE owns this  ·  MIT
+cloud/mutation_handler.py  ·  MIT
 
-CTO mandate: "Cloud mutation handler MUST dedup on mutation_id before any side
-effect (at-least-once redelivery is now proven)."
+Design rule: the cloud mutation handler must dedup on mutation_id before any
+side effect (at-least-once redelivery is the delivery guarantee).
 
 The edge offline queue is at-least-once: a single logical escalation can be
 REDELIVERED (lost ack, reconnect, retry). The cloud side effect here is a real
@@ -17,7 +17,7 @@ So this handler guarantees EXACTLY-ONCE EXECUTION per mutation_id:
   - Transient failure: entry is evicted so a later redelivery may retry. We do
     NOT cache failures as terminal (at-least-once expects eventual success).
 
-mutation_id CONTRACT (edge must honor — flag to CEE/CTO):
+mutation_id CONTRACT (edge must honor):
   mutation_id is minted ONCE when the mutation is ENQUEUED and reused on EVERY
   redelivery. Stable per logical mutation, e.g. f"{plan_id}:{step_id}". It must
   NOT be regenerated per send attempt, or dedup cannot work.
@@ -25,14 +25,23 @@ mutation_id CONTRACT (edge must honor — flag to CEE/CTO):
 Store is pluggable. Default is in-memory (correct within one process lifetime).
 Cross-restart correctness needs a persistent store (Redis/SQLite) — scale
 roadmap; the DedupStore interface is the swap point.
+
+SQLitePersistentDedupStore: survives process restarts, enables exactly-once
+across deployments. Uses the same schema approach as fabric.sync_queue.
 """
 
 from __future__ import annotations
 
 import asyncio
+import atexit
+import json
+import queue
+import sqlite3
 import time
+import threading
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Protocol
 
 from shared.harp_contract import Backend, InferRequest
@@ -63,9 +72,10 @@ class _Entry:
 
 class DedupStore(Protocol):
     """Swap point for persistence. Default impl is in-memory below."""
-    def get(self, mid: str) -> _Entry | None: ...
-    def put(self, mid: str, entry: _Entry) -> None: ...
-    def delete(self, mid: str) -> None: ...
+    async def get(self, mid: str) -> _Entry | None: ...
+    async def put(self, mid: str, entry: _Entry) -> None: ...
+    async def delete(self, mid: str) -> None: ...
+    async def update_result(self, mid: str, result: str) -> None: ...
 
 
 class InMemoryDedupStore:
@@ -73,21 +83,156 @@ class InMemoryDedupStore:
         self._d: dict[str, _Entry] = {}
         self._ttl = ttl_s
 
-    def get(self, mid: str) -> _Entry | None:
+    async def get(self, mid: str) -> _Entry | None:
         e = self._d.get(mid)
         if e and self._ttl and e.state == MutState.DONE and (time.monotonic() - e.created_at) > self._ttl:
             del self._d[mid]
             return None
         return e
 
-    def put(self, mid: str, entry: _Entry) -> None:
+    async def put(self, mid: str, entry: _Entry) -> None:
         self._d[mid] = entry
 
-    def delete(self, mid: str) -> None:
+    async def delete(self, mid: str) -> None:
         self._d.pop(mid, None)
+    
+    async def update_result(self, mid: str, result: str) -> None:
+        e = self._d.get(mid)
+        if e:
+            e.result = result
+            e.state = MutState.DONE
+            e.event.set()
 
 
-@dataclass
+# ---------------------------------------------------------------- persistent store
+# SQLite-backed dedup store that survives process restarts.
+# Thread-safe: uses a single writer thread + check_same_thread=False.
+
+_SQLITE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS mutation_dedup (
+    mutation_id TEXT PRIMARY KEY,
+    request_json TEXT NOT NULL,
+    response TEXT NOT NULL DEFAULT '',
+    state TEXT NOT NULL,           -- 'in_flight' | 'done'
+    created_at REAL NOT NULL,
+    completed_at REAL DEFAULT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mutation_state ON mutation_dedup(state);
+"""
+
+
+class SQLitePersistentDedupStore:
+    """Persistent exactly-once dedup store. Write-through design:
+
+      - In-process `_mem` is authoritative for LIVE entries — it holds the shared
+        `_Entry` (with its `asyncio.Event`) the handler uses to COALESCE concurrent
+        redeliveries. (A reconstructed-per-get entry could not share that event, so
+        a coalescing waiter would hang — the reason a naive SQLite store is wrong.)
+      - SQLite persists COMPLETED results so a redelivery AFTER A RESTART finds the
+        cached result and returns it without re-executing the side effect. Concurrent
+        coalescing across a restart is physically impossible (separate processes), so
+        nothing is lost.
+
+    SQL runs on a dedicated writer thread fed by a thread-safe `queue.Queue`;
+    futures resolve via `loop.call_soon_threadsafe`. The writer thread NEVER touches
+    an asyncio.Event (that only happens on the handler's loop). This fixes the prior
+    implementation, which mis-used `asyncio.Queue.get(timeout=)` from a thread and
+    hung on every call.
+    """
+
+    def __init__(self, db_path: str, *, ttl_s: float | None = None):
+        self.db_path = Path(db_path).resolve()
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._ttl = ttl_s
+        self._mem: dict[str, _Entry] = {}
+        self._q: "queue.Queue" = queue.Queue()         # thread-safe (NOT asyncio.Queue)
+        self._shutdown = threading.Event()
+        self._writer = threading.Thread(target=self._writer_loop, daemon=True)
+        self._writer.start()
+        atexit.register(self.close)
+
+    def _writer_loop(self) -> None:
+        conn = sqlite3.connect(self.db_path, check_same_thread=False, isolation_level=None)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.executescript(_SQLITE_SCHEMA)
+        try:
+            while not self._shutdown.is_set():
+                try:
+                    item = self._q.get(timeout=0.1)    # queue.Queue.get HAS a timeout
+                except queue.Empty:
+                    continue
+                if item is None:
+                    break
+                func, fut, loop = item
+                try:
+                    res = func(conn)
+                    loop.call_soon_threadsafe(fut.set_result, res)
+                except Exception as e:                 # surface to the awaiting coroutine
+                    loop.call_soon_threadsafe(fut.set_exception, e)
+        finally:
+            conn.close()
+
+    async def _exec(self, func):
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        self._q.put((func, fut, loop))
+        return await fut
+
+    async def get(self, mid: str) -> _Entry | None:
+        live = self._mem.get(mid)
+        if live is not None:                           # in-process: shared event, coalescing
+            return live
+        row = await self._exec(lambda c: c.execute(
+            "SELECT response, state, completed_at FROM mutation_dedup WHERE mutation_id=?",
+            (mid,)).fetchone())
+        if not row:
+            return None
+        resp, state, completed = row
+        if self._ttl and state == "done" and completed and (time.monotonic() - completed) > self._ttl:
+            await self.delete(mid)
+            return None
+        e = _Entry(state=MutState(state))
+        if state == MutState.DONE.value and resp:      # cross-restart cache hit
+            e.result = resp
+            e.event.set()
+            self._mem[mid] = e
+        return e
+
+    async def put(self, mid: str, entry: _Entry) -> None:
+        self._mem[mid] = entry                         # shared in-process entry
+        req_json = json.dumps(getattr(entry, "request_json", "") or "")
+        await self._exec(lambda c: c.execute(
+            "INSERT OR REPLACE INTO mutation_dedup (mutation_id, request_json, state, created_at) "
+            "VALUES (?, ?, ?, ?)", (mid, req_json, entry.state.value, time.monotonic())))
+
+    async def update_result(self, mid: str, result: str) -> None:
+        e = self._mem.get(mid)
+        if e is not None:                              # set the shared event on the loop thread
+            e.result = result
+            e.state = MutState.DONE
+            e.event.set()
+        await self._exec(lambda c: c.execute(
+            "UPDATE mutation_dedup SET response=?, state=?, completed_at=? WHERE mutation_id=?",
+            (result, MutState.DONE.value, time.monotonic(), mid)))
+
+    async def delete(self, mid: str) -> None:
+        self._mem.pop(mid, None)
+        await self._exec(lambda c: c.execute(
+            "DELETE FROM mutation_dedup WHERE mutation_id=?", (mid,)))
+
+    def close(self) -> None:
+        if self._writer.is_alive():
+            self._shutdown.set()
+            try:
+                self._q.put_nowait(None)
+            except Exception:
+                pass
+            self._writer.join(timeout=2.0)
+
+
+# ---------------------------------------------------------------- stats & handler
 class HandlerStats:
     executed: int = 0          # real side effects fired
     dedup_hits: int = 0        # sequential redeliveries served from cache
@@ -112,10 +257,10 @@ class CloudMutationHandler:
 
         # --- DEDUP DECISION: must happen BEFORE any side effect ---
         async with self._lock:
-            existing = self._store.get(mid)
+            existing = await self._store.get(mid)
             if existing is None:
                 entry = _Entry(state=MutState.IN_FLIGHT)
-                self._store.put(mid, entry)
+                await self._store.put(mid, entry)
                 owner = True
             else:
                 entry = existing
@@ -135,16 +280,13 @@ class CloudMutationHandler:
         # --- OWNER executes the single side effect ---
         try:
             result = await self._collect(env.request)
-            async with self._lock:
-                entry.result = result
-                entry.state = MutState.DONE
+            await self._store.update_result(mid, result)
             self.stats.executed += 1
             entry.event.set()
             return result
         except Exception:
             self.stats.failures += 1
-            async with self._lock:
-                self._store.delete(mid)             # evict -> redelivery may retry
+            await self._store.delete(mid)             # evict -> redelivery may retry
             entry.event.set()                       # wake waiters; they'll re-handle
             raise
 
@@ -194,5 +336,49 @@ async def _demo() -> None:
     print("\nPASS: dedup-before-side-effect holds under sequential + concurrent at-least-once redelivery")
 
 
+async def _demo_persistent() -> None:
+    """Prove the SQLite store: exactly-once in-process AND a cross-restart cache hit
+    (a redelivery after the process restarts must NOT re-run the side effect)."""
+    import os
+    import tempfile
+    db = os.path.join(tempfile.gettempdir(), "harp_dedup_demo.db")
+    for ext in ("", "-wal", "-shm"):
+        try:
+            os.remove(db + ext)
+        except OSError:
+            pass
+
+    env = MutationEnvelope(
+        "plan-X:reason1",
+        InferRequest(messages=[{"role": "user", "content": "decide"}], model_id="m"))
+
+    be1 = _FakeBackend()
+    store1 = SQLitePersistentDedupStore(db)
+    h1 = CloudMutationHandler(be1, store=store1)
+    r1 = await h1.handle(env)                         # first delivery: executes
+    r1b = await h1.handle(env)                        # sequential redelivery: cached
+    storm = await asyncio.gather(                     # concurrent: coalesced (shared event)
+        *[h1.handle(MutationEnvelope("plan-X:reason2", env.request)) for _ in range(5)])
+    assert be1.calls == 2, f"in-process exactly-once violated: {be1.calls}"
+    assert r1 == r1b and len(set(storm)) == 1
+    store1.close()
+
+    # SIMULATE RESTART: fresh in-process state + fresh backend, same db file.
+    be2 = _FakeBackend()
+    store2 = SQLitePersistentDedupStore(db)
+    h2 = CloudMutationHandler(be2, store=store2)
+    r2 = await h2.handle(env)                         # served from SQLite; backend NOT called
+    assert be2.calls == 0, f"cross-restart dedup failed: backend re-ran {be2.calls}x"
+    assert r2 == r1, "cross-restart returned a different result"
+    store2.close()
+    for ext in ("", "-wal", "-shm"):
+        try:
+            os.remove(db + ext)
+        except OSError:
+            pass
+    print("PASS (persistent): exactly-once in-process + cross-restart cache hit (no re-execution)")
+
+
 if __name__ == "__main__":
     asyncio.run(_demo())
+    asyncio.run(_demo_persistent())

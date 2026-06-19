@@ -1,20 +1,20 @@
 """
-HARP · edge/compile_qwen3.py · CEE-owned · MIT
+HARP · edge/compile_qwen3.py · MIT
 AI-Hub AOT pipeline: Qwen3-4B FP -> w4a16 Context Binary wrapped in ONNX, ready
-for onnxruntime-genai + QNN HTP EP on the Snapdragon X Elite (Risk A target).
+for onnxruntime-genai + QNN HTP EP on the Snapdragon X Elite.
 
 RUNS ON THE x86-64 COMPILE HOST — NOT on the device. qai_hub_models supports
 only AMDx64 Python on Windows/Linux; the heavy AOT compile happens on AI Hub's
 server-side farm, so this consumes ZERO Qualcomm Device Cloud interactive minutes.
 Only bench.py (on the QDC X Elite over SSH) spends minutes.
 
-Pipeline (grounding = Snapdragon LLM Deployment Walkthrough):
-  0 preflight     token + ruamel pin + device resolve          §"Dependency Breakages"
-  1 source graphs prompt_processor + token_generator ONNX      §"Multi-Graph Linking"
-  2 quantize      w4a16, mse_minimizer, AIMET PCQ, calibration  §"Quantization and Calibration"
-  3 compile+link  embed_in_onnx=True, weight-shared link        §"submit_compile_and_link_jobs"
-  4 assemble      genai_config.json + tokenizer + wrapper        §"Runtime Invocation"
-  5 profile (opt) AI Hub on-device latency cross-check (free)    Profiling Guide
+Pipeline:
+  0 preflight     token + ruamel pin + device resolve
+  1 source graphs prompt_processor + token_generator ONNX
+  2 quantize      w4a16, mse_minimizer, AIMET PCQ, calibration
+  3 compile+link  embed_in_onnx=True, weight-shared link        (submit_compile_and_link_jobs)
+  4 assemble      genai_config.json + tokenizer + wrapper
+  5 profile (opt) AI Hub on-device latency cross-check
 
 Usage:
   python compile_qwen3.py --device "Snapdragon X Elite CRD" --out ./build/qwen3-4b-w4a16
@@ -29,7 +29,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# w4a16 standard; embeddings + LM head kept w8a16 (AIMET selective) per walkthrough.
+# w4a16 standard; embeddings + LM head kept w8a16 (AIMET selective).
 GRAPH_NAMES = ["prompt_processor", "token_generator"]
 WEIGHT_DTYPE = "int4"
 ACT_DTYPE = "int16"
@@ -51,7 +51,7 @@ class CompilePlan:
 # ---- 0 preflight ------------------------------------------------------------
 def preflight(plan: CompilePlan) -> "object":
     # ruamel.yaml minor-version breakage halts qai_hub_models export with an
-    # obscure ModuleNotFoundError — pin it (walkthrough §"Dependency Breakages").
+    # obscure ModuleNotFoundError — pin it.
     try:
         import ruamel.yaml  # noqa
     except ImportError:
@@ -100,8 +100,8 @@ def source_graphs(plan: CompilePlan) -> dict:
 def quantize(hub, dev, plan: CompilePlan, graphs: dict) -> dict:
     """w4a16 via AI Hub quantize jobs. Calibration variance is the #1 silent
     killer: a thin calibration set yields distorted deep-layer scales -> the
-    linker ICE-crashes on the full model while a 4-layer slice compiles fine
-    (walkthrough §"Calibration Breakdown"). We assert a minimum sample count."""
+    linker ICE-crashes on the full model while a 4-layer slice compiles fine.
+    We assert a minimum sample count."""
     calib = sorted(plan.calib_dir.glob("*.npy")) if plan.calib_dir.exists() else []
     if len(calib) < 32:
         sys.exit(f"FATAL: calibration set too thin ({len(calib)} < 32). Provide a "
@@ -127,8 +127,8 @@ def quantize(hub, dev, plan: CompilePlan, graphs: dict) -> dict:
 # ---- 3 compile + link -------------------------------------------------------
 def compile_and_link(hub, dev, plan: CompilePlan, qmodels: dict):
     """Single weight-shared Context Binary across prefill+decode, wrapped in ONNX.
-    Independent compiles would duplicate the ~2.8 GB weights and OOM the device
-    (walkthrough §"weight sharing"). embed_in_onnx replaces the deprecated
+    Independent compiles would duplicate the ~2.8 GB weights and OOM the device;
+    weight sharing avoids this. embed_in_onnx replaces the deprecated
     --target_runtime precompiled_qnn_onnx string."""
     print(f"[3] compile_and_link graphs={GRAPH_NAMES} embed_in_onnx=True device={dev.name}")
     job = hub.submit_compile_and_link_jobs(
@@ -161,7 +161,7 @@ def assemble(plan: CompilePlan, wrapper: Path) -> Path:
                             "backend_path": "QnnHtp.dll",
                             "htp_performance_mode": "burst",
                             "htp_graph_finalization_optimization_mode": "3",
-                            # DR3: full VTCM to one graph at a time
+                            # Serialize execution; one graph gets full VTCM at a time.
                             "htp_vtcm_optimization": "SEQUENTIAL_WITH_VA_OPTIMIZATION",
                         }
                     }],
@@ -188,7 +188,7 @@ def assemble(plan: CompilePlan, wrapper: Path) -> Path:
 # ---- 5 optional AI Hub profile (free latency cross-check) -------------------
 def profile(hub, dev, wrapper: Path):
     """AI Hub runs this on its OWN X Elite farm — costs no QDC minutes. Gives a
-    latency baseline to cross-check bench.py's host-clock numbers (DR2: host clock
+    latency baseline to cross-check bench.py's host-clock numbers (host clock
     is an upper bound on async NPU dispatch)."""
     print(f"[5] submit_profile_job on {dev.name} (server-side, free of QDC minutes)")
     job = hub.submit_profile_job(model=str(wrapper), device=dev)

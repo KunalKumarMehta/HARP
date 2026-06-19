@@ -1,8 +1,8 @@
 """
-HARP — tests/e2e_smoke.py  ·  End-to-end routing smoke (CTO gate)  ·  MIT
+HARP — tests/e2e_smoke.py  ·  End-to-end routing smoke  ·  MIT
 
 Spans two layers (shared freeze + router policy), so it lives ABOVE shared/ —
-the freeze stays router-agnostic. Wires CAIO's PolicyRouter into a full
+the freeze stays router-agnostic. Wires the PolicyRouter into a full
 PlanGraph dispatch and asserts the integration invariants:
 
   1. planner pins (LOCAL / ESCALATE) are honored verbatim

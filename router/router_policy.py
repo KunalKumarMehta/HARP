@@ -1,41 +1,38 @@
 """
 HARP — Hardware-Aware Routing Platform
-router/router_policy.py  ·  CAIO ARTIFACT v0  ·  MIT
+router/router_policy.py  ·  MIT
 
-The learned routing brain. Fills the seam the CTO froze:
-    harp_contract.Router._select -> "CAIO's learned policy slots in at _decide later"
+The learned routing brain. Fills the seam in the frozen contract:
+    harp_contract.Router._select -> learned policy slots in at _decide
 
-Doctrine (grounded, not assumed):
+Design notes:
   - Router BASE = mmBERT-small, ENCODER-only, ~140 MB INT8 (heads FP16).
-    DR-1 (Sub-1B NPU Compilation) is decisive: decoder routers (Qwen3-0.6B,
-    Arch-Router-1.5B) are memory-bandwidth-bound at 50-150 ms TTFT on Hexagon
-    and need a statically-allocated KV cache. Only a stateless single-pass
-    encoder breaks the <10 ms always-resident barrier. The head emits a binary
-    {local, escalate} hardness score; uncertainty u(x) = P(escalate) from that
-    head, NOT a decode-time per-token margin.
-  - NEVER route on raw argmax. Calibrate first, threshold second.
-      -> LLM Routing & Cascade Classifiers V2 §"Calibrated Uncertainty"
+    Decoder routers (Qwen3-0.6B, Arch-Router-1.5B) are memory-bandwidth-bound
+    at 50-150 ms TTFT on Hexagon and need a statically-allocated KV cache.
+    Only a stateless single-pass encoder breaks the <10 ms always-resident
+    barrier. The head emits a binary {local, escalate} hardness score;
+    uncertainty u(x) = P(escalate) from that head, NOT a decode-time
+    per-token margin.
+  - Never route on raw argmax. Calibrate first, threshold second.
   - Asymmetric risk: under-routing (a hard query sent to the SLM) is the
     dangerous failure; over-routing only wastes cloud cost. Gate is tuned to
-    BOUND under-routing at alpha via a conformal threshold.
-      -> V2 §"Conformal Prediction and Strict Marginal Guarantees"
+    bound under-routing at alpha via a conformal threshold.
   - Two-stage signal: encoder hardness score u(x) -> isotonic map to a real
     edge-error probability p_err (for logging / cost-optimal threshold) ->
     conformal delta as the actual escalation gate.
-      -> V2 §"Isotonic Regression and the UCCI Framework"
 
 Separation of concerns vs the frozen contract:
   - THIS module decides COMPLEXITY  (local vs escalate from the query).
   - harp_contract.Router._select keeps the HARDWARE/CONNECTIVITY guard
     (offline, npu_present, modality coverage). We do not duplicate or fight it.
 
-Integration (RATIFIED — RouteDecision.AUTO approved by CTO):
+Integration:
   - The NAT ReWOO planner emits PlanStep.decision = AUTO ("undecided") for every
-    step whose tier it defers (DR-4: this is NAT's native idiom). It pins
-    ESCALATE only when structurally certain (a deep-reason step), and LOCAL only
-    when it must stay on-device (privacy). PolicyRouter resolves AUTO via the
-    calibrated gate; it never overrides a planner pin. The base-class hardware
-    guard still has final say.
+    step whose tier it defers (this is NAT's native idiom). It pins ESCALATE
+    only when structurally certain (a deep-reason step), and LOCAL only when it
+    must stay on-device (privacy). PolicyRouter resolves AUTO via the calibrated
+    gate; it never overrides a planner pin. The base-class hardware guard still
+    has final say.
 """
 
 from __future__ import annotations
@@ -51,9 +48,14 @@ from shared.harp_contract import (
 
 
 # ---------------------------------------------------------------- routing features
-# The gatekeeper's input contract. CTO/CEE populate device + connectivity from
-# telemetry; the query fields are extracted on the hot path. Keep this stable —
-# the synthetic-data generator (synth_routing_data.py) emits exactly these keys.
+# The gatekeeper's input contract. Device + connectivity fields are populated
+# from telemetry; the query fields are extracted on the hot path. Keep this
+# stable — the synthetic-data generator (synth_routing_data.py) emits exactly
+# these keys.
+
+from router.tracing import (
+    trace_decide, trace_pin_honored, trace_guard, trace_dispatch,
+)
 
 @dataclass(frozen=True)
 class RoutingFeatures:
@@ -170,8 +172,8 @@ _TRIVIAL = re.compile(
 
 def mock_score_fn(query: str) -> float:
     """Stand-in for the mmBERT-small encoder head's hardness score u(x) = P(escalate),
-    a single-pass classification output (NOT a decode-time margin — see DR-1).
-    Deterministic so the gate is testable today; CEE swaps in the QNN-EP encoder.
+    a single-pass classification output (NOT a decode-time margin).
+    Deterministic so the gate is testable; swap in the QNN-EP encoder for production.
     Heuristic: longer + reasoning-marker queries read as higher hardness."""
     q = query.lower()
     base = min(len(query) / 400.0, 0.6)
@@ -205,41 +207,62 @@ class RoutingPolicy:
         self.gate.fit(u, err)
         return self
 
-    def decide(self, f: RoutingFeatures) -> RoutingVerdict:
+    def decide(self, f: RoutingFeatures, *, step_id: str = "", plan_id: str = "") -> RoutingVerdict:
         t0 = time.perf_counter()
+        decision_in = "AUTO"  # This method only handles AUTO resolution
 
         # --- capability guards (mirror the contract; complexity is moot if edge can't run it)
         if f.modality not in f.edge_modalities or not f.npu_present:
             if not f.online:
-                return self._verdict(RouteDecision.LOCAL, "offline_degraded_no_edge_path", t0)
-            return self._verdict(RouteDecision.ESCALATE, "capability_modality", t0)
+                v = self._verdict(RouteDecision.LOCAL, "offline_degraded_no_edge_path", t0)
+                trace_guard(step_id, plan_id, decision_in, "edge", v.reason)
+                return v
+            v = self._verdict(RouteDecision.ESCALATE, "capability_modality", t0)
+            trace_guard(step_id, plan_id, decision_in, "cloud", v.reason)
+            return v
         if f.approx_tokens > f.edge_max_context:
             if not f.online:
-                return self._verdict(RouteDecision.LOCAL, "offline_degraded_overlong", t0)
-            return self._verdict(RouteDecision.ESCALATE, "capability_context", t0)
+                v = self._verdict(RouteDecision.LOCAL, "offline_degraded_overlong", t0)
+                trace_guard(step_id, plan_id, decision_in, "edge", v.reason)
+                return v
+            v = self._verdict(RouteDecision.ESCALATE, "capability_context", t0)
+            trace_guard(step_id, plan_id, decision_in, "cloud", v.reason)
+            return v
 
         # --- offline: escalate is physically unavailable, fail closed to local
         if not f.online:
-            return self._verdict(RouteDecision.LOCAL, "offline_forced_local", t0)
+            v = self._verdict(RouteDecision.LOCAL, "offline_forced_local", t0)
+            trace_guard(step_id, plan_id, decision_in, "edge", v.reason)
+            return v
 
         # --- thermal / power pressure: bias the cheap work off the NPU
         if f.thermal_c is not None and f.thermal_c >= self.thermal_ceiling_c:
-            return self._verdict(RouteDecision.ESCALATE, "thermal_guard", t0)
+            v = self._verdict(RouteDecision.ESCALATE, "thermal_guard", t0)
+            trace_guard(step_id, plan_id, decision_in, "cloud", v.reason)
+            return v
         if (f.battery_pct is not None and f.battery_pct <= self.battery_floor_pct):
-            return self._verdict(RouteDecision.ESCALATE, "battery_guard", t0)
+            v = self._verdict(RouteDecision.ESCALATE, "battery_guard", t0)
+            trace_guard(step_id, plan_id, decision_in, "cloud", v.reason)
+            return v
 
         # --- heuristic floor: trivial turn, never invoke the head
         if _TRIVIAL.match(f.query):
-            return self._verdict(RouteDecision.LOCAL, "trivial_floor", t0, u=0.0, p_err=0.0)
+            v = self._verdict(RouteDecision.LOCAL, "trivial_floor", t0, u=0.0, p_err=0.0)
+            trace_decide(step_id, plan_id, decision_in, v)
+            return v
 
         # --- calibrated complexity gate
         u = self.score_fn(f.query)
         p_err = self.calibrator.predict(u)
         if self.gate.escalate(u):
-            return self._verdict(RouteDecision.ESCALATE, "complexity_gate", t0,
-                                 u=u, p_err=p_err)
-        return self._verdict(RouteDecision.LOCAL, "complexity_gate", t0,
+            v = self._verdict(RouteDecision.ESCALATE, "complexity_gate", t0,
                              u=u, p_err=p_err)
+            trace_decide(step_id, plan_id, decision_in, v)
+            return v
+        v = self._verdict(RouteDecision.LOCAL, "complexity_gate", t0,
+                         u=u, p_err=p_err)
+        trace_decide(step_id, plan_id, decision_in, v)
+        return v
 
     def _verdict(self, d: RouteDecision, reason: str, t0: float,
                  u: float = 0.0, p_err: float = 0.0) -> RoutingVerdict:
@@ -275,13 +298,16 @@ class PolicyRouter(Router):
                 edge_max_context=cap.max_context,
                 approx_tokens=max(1, len(step.prompt) // 4),
             )
-            verdict = self.policy.decide(f)
+            verdict = self.policy.decide(f, step_id=step.step_id, plan_id="")  # plan_id not available here
             resolved = PlanStep(
                 step_id=step.step_id, modality=step.modality,
                 decision=verdict.decision, model_id=step.model_id,
                 prompt=step.prompt, depends_on=step.depends_on,
             )
             return await super()._select(resolved)      # hardware/offline guard, final say
+        # Planner pin: trace and pass through
+        trace_pin_honored(step.step_id, "", step.decision.value, 
+                         "edge" if step.decision == RouteDecision.LOCAL else "cloud")
         return await super()._select(step)
 
 

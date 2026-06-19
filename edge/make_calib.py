@@ -1,17 +1,17 @@
 """
-HARP · edge/make_calib.py · CEE-owned · MIT
+HARP · edge/make_calib.py · MIT
 Calibration-set generator for AI Hub w4a16/w8a16 quantize jobs.
 
 WHY THIS EXISTS: a thin or uniform calibration set distorts deep-layer activation
 scales → the linker ICE-crashes on the full model while a 4-layer slice compiles
-clean (Deployment Walkthrough §"Calibration Breakdown"). compile_qwen3.py asserts
+clean. compile_qwen3.py asserts
 ≥32 samples; this guarantees they are also DIVERSE — count alone does not prevent
 the ICE, distribution coverage does.
 
 Emits one .npy per sample (int64 input_ids) into --out, ready for
 submit_quantize_job(calibration_data={"input_ids": [...]}).
 
-Diversity is enforced on three axes the walkthrough flags:
+Diversity is enforced on three axes:
   - DOMAIN  : code / math / prose / dialogue / structured / multilingual
   - LENGTH  : short / medium / long (covers prefill-shape variance)
   - both spreads asserted before write; dedup by token signature.
@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 # Multi-domain seed prompts. Indic + code-switch lines included because the router
-# and IndicConformer calibration must see Hinglish, not just English (Indic STT doc).
+# and IndicConformer calibration must see Hinglish, not just English.
 SEEDS: dict[str, list[str]] = {
     "code": [
         "def quantize(w, bits): return round(w * (2**bits - 1))",

@@ -1,6 +1,6 @@
 """
 HARP — Hardware-Aware Routing Platform
-cloud/emit_first_plan.py  ·  CCE owns this  ·  MIT
+cloud/emit_first_plan.py  ·  MIT
 
 FIRST REAL PLAN-GRAPH EMISSION. Drives the MANAGER (planner) NIM directly
 through our verified NIMBackend, parses its JSON DAG into the contract
@@ -10,7 +10,7 @@ to a real graph the moment HARP_NIM_API_KEY is set. The NAT rewoo config +
 dag_extractor middleware are the full-system productionization of the same
 boundary; this is the direct-invocation equivalent that emits now.
 
-Run live (their box):   HARP_NIM_API_KEY=... python -m cloud.emit_first_plan "Analyze the call recording and screen scan, then decide next action"
+Run live:   HARP_NIM_API_KEY=... python -m cloud.emit_first_plan "Analyze the call recording and screen scan, then decide next action"
 Run offline (parse proof): python -m cloud.emit_first_plan --mock
 """
 

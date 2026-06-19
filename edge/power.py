@@ -1,13 +1,13 @@
 """
-HARP · edge/power.py · CEE-owned · MIT
+HARP · edge/power.py · MIT
 Instantaneous power telemetry for energy-per-token.
 
 Grounding:
-  - E_token = ∫P(t)dt / N, mJ, idle baseline subtracted        Profiling Guide §"Energy-per-Token"
-  - WoS: HWiNFO_SENS_SM2 shared mem, two-pass NPU isolation     DR1 §"Isolating the Hexagon NPU Power Rail"
-  - struct offsets / mutex / magic                              DR1 §"Architecture of the HWiNFO_SENS_SM2 Segment"
-  - CSV fallback (Free Edition 12h shm cap)                     DR1 §"CSV-Export Fallback Architecture"
-  - Android: P=V·I from sysfs current_now × voltage_now         Profiling Guide §"Android OS APIs"
+  - E_token = ∫P(t)dt / N, mJ, idle baseline subtracted
+  - WoS: HWiNFO_SENS_SM2 shared mem, two-pass NPU isolation
+  - struct offsets / mutex / magic
+  - CSV fallback (Free Edition 12h shm cap)
+  - Android: P=V·I from sysfs current_now × voltage_now
 """
 from __future__ import annotations
 
@@ -20,11 +20,11 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
-# ---- DR1: HWiNFO_SENS_SM2 binary layout ------------------------------------
+# ---- HWiNFO_SENS_SM2 binary layout -----------------------------------------
 SM2_NAME = "Global\\HWiNFO_SENS_SM2"
 SM2_MUTEX = "Global\\HWiNFO_SM2_MUTEX"
 MAGIC = 0x53695748          # 'SiWH'
-MAGIC_SWAP = 0x48576953     # endianness-inverted guard, per DR1
+MAGIC_SWAP = 0x48576953     # endianness-inverted guard
 SENSOR_TYPE_POWER = 5       # type enum: 1=temp 5=power 6=MHz 7=%
 
 
@@ -82,7 +82,7 @@ def parse_npu_power(buf, sensor_match=("Hexagon NPU", "Snapdragon"),
 
     Pass 1: find the sensor whose name_original substring-matches the NPU.
     Pass 2: entry where sensor_index==target AND type==POWER AND unit=='W'.
-    value_max is also available for sub-poll-interval transient spikes (DR1).
+    value_max is also available for sub-poll-interval transient spikes.
     """
     hdr = HWiNFOHeader.from_buffer_copy(buf[: ctypes.sizeof(HWiNFOHeader)])
     if hdr.magic not in (MAGIC, MAGIC_SWAP):
@@ -169,7 +169,7 @@ class PowerSampler(ABC):
 
 
 class WoSHwinfoSampler(PowerSampler):
-    """Snapdragon X/X2 Elite Copilot+ PC. Real mmap + Win32 mutex per DR1.
+    """Snapdragon X/X2 Elite Copilot+ PC. Real mmap + Win32 mutex.
     Mutex hold is mandatory: skipping it yields torn doubles (megawatt/kilo-°C
     garbage). Windows-only — raises elsewhere so the Linux dev box stays clean."""
     def __init__(self, poll_hz: float = 5.0, mutex_timeout_ms: int = 500):
@@ -199,7 +199,7 @@ class WoSHwinfoSampler(PowerSampler):
 
 
 class CsvFallbackSampler(PowerSampler):
-    """DR1 fallback: HWiNFO Free shm caps at 12h. Tail the continuous CSV export.
+    """HWiNFO Free shm caps at 12h; tail the continuous CSV export as fallback.
     Fuzzy-matches the 'Hexagon NPU [Power]'-style column so user relabeling in the
     HWiNFO GUI doesn't silently break the mapping. Works on any OS for replay."""
     def __init__(self, csv_path: str, col_match=("hexagon", "npu", "power"), poll_hz: float = 2.0):

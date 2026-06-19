@@ -26,7 +26,7 @@
     "escalate": 1
   },
   "train_recipe": {
-    "head": "binary sequence classification, FP16 head (DR-1)",
+    "head": "binary sequence classification, FP16 head",
     "loss": "weighted CE using per-row `weight` (or focal, gamma=2)",
     "peft": "LoRA r=16 a=32 on attention proj; encoder body W8A16 post-QAT",
     "never": "vanilla CE (collapses to majority-local)",

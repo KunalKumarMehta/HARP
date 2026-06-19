@@ -1,16 +1,16 @@
 """
-HARP · edge/compile_spike.py · CEE-owned · MIT
+HARP · edge/compile_spike.py · MIT
 AI Hub compile for the NON-autoregressive specialists: the mmBERT router
 (encoder + classification head) and IndicConformer ASR (CTC/RNNT). Neither uses
 a KV cache or genai_config — they run on a plain onnxruntime + QNN EP session,
 single forward pass. That is the core difference from compile_qwen3.py.
 
 Grounding:
-  - encoders/ASR need STATIC input shapes on HTP -> pad to fixed seq/mel len      Sub-1B compilation
-  - ASR w8a16, NOT w4a16: INT8 weights w/o QAT distort Indic phonemes (WER↑)        Indic STT §"Precision Scaling"
-  - AI Hub transforms MHA->SHA, linear->1x1 conv, then QNN_CONTEXT_BINARY           Indic STT §"Compilation"
-  - custom LoRA-merged weights: pass local HF checkpoint dir to export              Indic STT §"Compiling Custom Weights"
-  - router is the ONE tuned model (SFT/LoRA on synthetic routing data)              canon
+  - encoders/ASR need STATIC input shapes on HTP -> pad to fixed seq/mel len
+  - ASR w8a16, NOT w4a16: INT8 weights w/o QAT distort Indic phonemes (WER↑)
+  - AI Hub transforms MHA->SHA, linear->1x1 conv, then QNN_CONTEXT_BINARY
+  - custom LoRA-merged weights: pass local HF checkpoint dir to export
+  - router is the one tuned model (SFT/LoRA on synthetic routing data)
 """
 from __future__ import annotations
 

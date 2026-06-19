@@ -1,14 +1,13 @@
 """
 HARP — Hardware-Aware Routing Platform
-data/synth_routing_data.py  ·  CAIO ARTIFACT v1  ·  MIT
+data/synth_routing_data.py  ·  MIT
 
 Synthetic routing-decision corpus for the mmBERT-small ENCODER router.
 Target: a binary sequence classifier {0=local, 1=escalate}. NOT a decoder.
 
-Grounding (do not deviate — these are the failure modes the corpus must dodge):
-  LLM Routing & Cascade Classifiers V2
+Failure modes this corpus is designed to avoid:
     - PAIRED GENERATION: hold query constant, run edge-SLM and cloud-LLM, label
-      from the correctness/quality DELTA. §"Paired generation".
+      from the correctness/quality DELTA.
     - CLASSIFIER COLLAPSE: artifact-laden corpora mark the small model "optimal"
       for ~79% of queries -> CE collapses to majority class (always-local) ->
       aggressive silent under-routing. Defenses, all applied below:
@@ -16,7 +15,7 @@ Grounding (do not deviate — these are the failure modes the corpus must dodge)
         (b) inverse-frequency class WEIGHTS emitted per row (train with weighted
             or focal CE — never vanilla CE),
         (c) never trust argmax at inference (the conformal gate is the backstop).
-    - VERBOSITY BIAS: strip <think>...</think> before any reward scoring. §RM.
+    - VERBOSITY BIAS: strip <think>...</think> before any reward scoring.
     - CNA (Ceiling-Normalized Accuracy): score against the cloud-achievable
       ceiling, not raw accuracy. Reported in stats.
 
@@ -261,7 +260,7 @@ def split_write(recs: list[Record], out: Path, val_frac=0.1, test_frac=0.1,
         "max_len": 512,
         "label_map": {"local": 0, "escalate": 1},
         "train_recipe": {
-            "head": "binary sequence classification, FP16 head (DR-1)",
+            "head": "binary sequence classification, FP16 head",
             "loss": "weighted CE using per-row `weight` (or focal, gamma=2)",
             "peft": "LoRA r=16 a=32 on attention proj; encoder body W8A16 post-QAT",
             "never": "vanilla CE (collapses to majority-local)",

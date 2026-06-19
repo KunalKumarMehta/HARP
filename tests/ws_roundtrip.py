@@ -1,5 +1,5 @@
 """
-HARP — tests/ws_roundtrip.py  ·  Fabric transport proof (CTO test mandate)  ·  MIT
+HARP — tests/ws_roundtrip.py  ·  Fabric transport proof  ·  MIT
 
 Real websockets over loopback TCP. Proves:
   A. happy path drains FIFO; a server-rejected mutation is quarantined (conflict).

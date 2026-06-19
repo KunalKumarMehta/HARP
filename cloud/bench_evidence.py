@@ -1,23 +1,23 @@
 """
 HARP — Hardware-Aware Routing Platform
-cloud/bench_evidence.py  ·  CCE owns this  ·  MIT
+cloud/bench_evidence.py  ·  MIT
 
-The NVIDIA scoring metric, operationalized. NVIDIA Open Hackathon rewards a
-real workload OPTIMIZED on their stack with a quantified delta. This harness
-drives the contract's profile() against two configs (baseline vs optimized),
-computes the GenAI-Perf metric family, and prints the judge-facing evidence
-table + the framing lines that map metrics -> business value.
+The NVIDIA scoring metric, operationalized. This harness drives the contract's
+profile() against two configs (baseline vs optimized), computes the GenAI-Perf
+metric family, and prints an evidence table with lines that map metrics to
+business value.
 
-Grounding (NVIDIA LLM Hackathon Optimization Strategy doc):
+Metric definitions:
   - TTFT = first CONTENT token; ITL = (e2e - TTFT)/(out_tokens - 1)
-  - "goodput" = throughput under a fixed latency SLA (TTFT ceiling)  <- the metric judges actually care about
-  - Narrative hooks: roofline (memory- vs compute-bound), TCO (3x TPS at same SLA = 1/3 the GPUs)
+  - "goodput" = throughput under a fixed latency SLA (TTFT ceiling) — the metric
+    that matters under a latency SLA
+  - Key angles: roofline (memory- vs compute-bound), TCO (3x TPS at same SLA = 1/3 the GPUs)
   - Real sweep is `genai-perf analyze --sweep-type concurrency` on the deployed
     TRT-LLM engine in Triton; this harness is the in-process pre-flight + the
     table generator. Final numbers come from GenAI-Perf on the GPU box.
 
-Runs against the mock cloud backend today (no GPU needed) so the evidence
-pipeline is built and tested before the real NIM/TRT-LLM engine is provisioned.
+Runs against the mock cloud backend (no GPU needed) so the evidence pipeline is
+built and tested before the real NIM/TRT-LLM engine is provisioned.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from dataclasses import dataclass
 
 from shared.harp_contract import Backend, InferRequest, Modality, mock_cloud
 
-# Interactive-agent SLA: TTFT ceiling for fluid tool-use (per optimization doc).
+# Interactive-agent SLA: TTFT ceiling for fluid tool-use.
 TTFT_SLA_MS = 500.0
 
 
@@ -49,7 +49,7 @@ class BenchResult:
 
 async def run_config(be: Backend, label: str, req: InferRequest, runs: int = 12) -> BenchResult:
     """Drive profile() N times, aggregate GenAI-Perf-style percentiles. Warm-up
-    run discarded (TRT-LLM/JIT warm path skew, per doc)."""
+    run discarded (TRT-LLM/JIT warm path skew)."""
     await be.profile(req)  # warm-up, discarded
     ttfts: list[float] = []
     tok_s: list[float] = []
@@ -72,7 +72,7 @@ async def run_config(be: Backend, label: str, req: InferRequest, runs: int = 12)
     )
 
 
-# DR-3 defensible bands. A measured delta OUTSIDE these means the baseline is wrong.
+# Defensible bands. A measured delta OUTSIDE these means the baseline is wrong.
 #   HF/PyTorch static -> vLLM     : order-of-magnitude (up to ~75% fleet reduction)
 #   vLLM -> TensorRT-LLM          : +15-30% throughput, -10-20% p50 TTFT  (NOT a big multiplier)
 TRTLLM_TPS_BAND = (1.15, 1.30)
@@ -101,7 +101,7 @@ def render_pack(base: BenchResult, opt: BenchResult, baseline_engine: str = "vLL
         f"{'throughput (tok/s)':<22}{base.tok_s_mean:>14.1f}{opt.tok_s_mean:>14.1f}{tps_x:>11.2f}x  ({tps_note})",
         f"{'goodput @SLA<%dms' % TTFT_SLA_MS:<22}{base.sla_pass_rate:>13.0%}{opt.sla_pass_rate:>14.0%}",
         "-" * 62,
-        "JUDGE FRAMING (DR-3 rules — cite measured, ban aspirational TFLOPS):",
+        "EVIDENCE FRAMING (cite measured values; ban aspirational TFLOPS):",
         f"  • TTFT: {ttft_x:.2f}x ({ttft_note}). State baseline explicitly: vs {baseline_engine}.",
         f"  • Throughput: {tps_x:.2f}x at fixed TTFT SLA = goodput, not raw TPS.",
         f"  • TCO: {tps_x:.2f}x goodput => ~{gpu_fraction:.2f} of the fleet for equal users.",

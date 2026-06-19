@@ -5,13 +5,13 @@ fabric/sync_queue.py  ·  Offline mutation queue (four-state FSM)  ·  MIT
 The offline-resilience backbone. Pure stdlib (sqlite3 only) so it builds native
 on Windows ARM64 with zero win_arm64 wheel risk and zero Prism emulation.
 
-Grounding (ARM64 Python Fabric doc):
+Design notes:
   - Four states: pending -> in_flight -> success | conflict
   - Atomic dual-write (materialized + outbox) under BEGIN IMMEDIATE
   - Client-generated UUID primary keys  -> server idempotency, no ID translation
   - Monotonic integer revisions, NOT timestamps -> conflict res immune to clock drift
   - On reconnect: in_flight -> pending, blind retransmit (at-least-once)
-  - WAL + tuned PRAGMAs; CRDTs deliberately NOT used (CTO-4, research-ratified)
+  - WAL + tuned PRAGMAs; CRDTs deliberately NOT used (see ADR)
 
 Threading contract: this object is single-writer. The fabric node owns ONE
 dedicated single-worker ThreadPoolExecutor and confines this connection to it

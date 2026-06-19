@@ -1,29 +1,29 @@
-# HARP — cloud planner config  ·  NAT v1.7.0  ·  CCE owns  ·  MIT
-# Grounded against VERIFIED installed surface:
+# HARP — cloud planner config  ·  NAT v1.7.0  ·  MIT
+# Configuration notes:
 #   - llm _type "nim"  -> nat.llm.nim_llm.NIMModelConfig(name="nim")
-#     real fields: model_name, base_url, api_key, temperature, top_p, max_tokens, thinking
-#   - rewoo_agent ships in a FRAMEWORK PLUGIN, not base nvidia-nat. Install the
+#     Schema fields: model_name, base_url, api_key, temperature, top_p, max_tokens, thinking
+#   - rewoo_agent ships in a plugin, not base nvidia-nat. Install the
 #     plugin that registers it (e.g. `pip install nvidia-nat-langchain`) before
 #     `nat run`. Base install will NOT resolve `_type: rewoo_agent`.
-#   - DAG extraction/suppression is done by our FunctionMiddleware (pre_invoke),
+#   - DAG extraction/suppression is done by FunctionMiddleware (pre_invoke),
 #     registered separately — see dag_extractor_middleware.py.
 #
 # api_key resolves from env HARP_NIM_API_KEY at runtime (do not inline secrets).
 
 llms:
-  # MANAGER tier — the planner. Reasoning ON so it synthesizes the dependency DAG.
+  # Planner LLM with chain-of-thought reasoning to synthesize the dependency DAG.
   nim_planner:
     _type: nim
-    model_name: nvidia/llama-3.3-nemotron-super-49b-v1.5   # registry MANAGER_PRAGMATIC; swap to nemotron-3-super-120b-a12b for hard plans
+    model_name: nvidia/llama-3.3-nemotron-super-49b-v1.5   # swap to nemotron-3-super-120b-a12b for more complex plans
     base_url: https://integrate.api.nvidia.com/v1
     temperature: 0.1
     max_tokens: 4096
     thinking: true                # enable_thinking — exposes CoT for DAG synthesis
 
-  # WORKER tier — cloud solver / sub-agent. Reasoning OFF for low-latency factual synthesis.
+  # Solver LLM for step execution. Reasoning disabled for low-latency factual synthesis.
   nim_solver:
     _type: nim
-    model_name: nvidia/nemotron-3-nano-30b-a3b            # registry WORKER_GENERAL
+    model_name: nvidia/nemotron-3-nano-30b-a3b
     base_url: https://integrate.api.nvidia.com/v1
     temperature: 0.0
     max_tokens: 1024
@@ -31,7 +31,7 @@ llms:
 
 # Edge tools the planner is allowed to schedule. In full distributed mode these
 # are pulled from the edge device's MCP server; here declared so the planner's
-# schemas match the executor's real capabilities (CTODR-2: schemas must map 1:1).
+# schemas match the executor's real capabilities (schemas must map 1:1).
 functions:
   asr_transcribe:
     _type: mcp_client            # edge MCP server hosts the real impl

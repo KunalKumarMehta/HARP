@@ -1,16 +1,15 @@
 """
-HARP · shared/mutation.py · CEE↔CCE interface · MIT
+HARP · shared/mutation.py · edge↔cloud interface · MIT
 =====================================================================
-CEE → CCE CONFIRMATION: mutation_id keying (unblocks CloudMutationHandler)
+mutation_id keying — edge/cloud wiring notes (unblocks CloudMutationHandler)
 =====================================================================
-You asked CEE to confirm how `mutation_id` is keyed before wiring
-CloudMutationHandler in front of the escalate path. Confirmed, grounded in the
-ARM64 fabric four-state-queue canon:
+Notes on how `mutation_id` is keyed when wiring CloudMutationHandler in front
+of the escalate path, grounded in the ARM64 fabric four-state-queue design:
 
  1. mutation_id is a CLIENT-generated ULID — generated at the edge, in the
     `pending` state, BEFORE any network exists. Not server-assigned. ULID over
     UUIDv4 deliberately: it is lexicographically sortable (48-bit time prefix),
-    so it doubles as the FIFO ordering key your handler can sort on.
+    so it doubles as the FIFO ordering key the handler can sort on.
  2. It is assigned ONCE at enqueue and is STABLE across every retransmit. On
     reconnect the edge downgrades in_flight→pending and retransmits the SAME id
     (blind at-least-once delivery). Id stability is the entire basis of dedup.
@@ -30,8 +29,8 @@ ARM64 fabric four-state-queue canon:
     with the identical recent-id-cache check — wire it in front of escalate
     exactly as in front of CREATE/UPDATE/DELETE. No special-casing.
 
-Net for your wiring: key on `mutation_id` for idempotency, `(entity_id,
-entity_revision)` for conflict, sort by `mutation_id` for FIFO. Frozen.
+Wiring summary: key on `mutation_id` for idempotency, `(entity_id,
+entity_revision)` for conflict, sort by `mutation_id` for FIFO.
 =====================================================================
 """
 from __future__ import annotations
@@ -41,7 +40,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 
-# ---- minimal pure-Python ULID (no dep — ARM64 win_arm64 wheel mandate) ------
+# ---- minimal pure-Python ULID (no dep — compatible with ARM64/win_arm64 wheels) ------
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"   # 32 symbols, excl I L O U
 
 
@@ -82,7 +81,7 @@ class MutationOp(str, Enum):
 @dataclass
 class MutationEnvelope:
     """The serialized outbox row. Edge emits it; CloudMutationHandler consumes it.
-    Field names are the frozen wire contract between CEE (edge) and CCE (cloud)."""
+    Field names are the frozen wire contract between the edge and cloud backends."""
     mutation_id: str                       # client ULID — idempotency + FIFO key
     entity_id: str                         # client ULID — global PK, accepted blindly
     entity_revision: int                   # monotonic int — conflict key (server-wins LWW)
