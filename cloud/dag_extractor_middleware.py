@@ -1,17 +1,17 @@
 """
 HARP — Hardware-Aware Routing Platform
-cloud/dag_extractor_middleware.py  ·  CCE owns this  ·  MIT  ·  NAT v1.7.0
+cloud/dag_extractor_middleware.py  ·  MIT  ·  NAT v1.7.0
 
-Pre-execution DAG interception + suppression, built against the VERIFIED
-installed API (introspected from nvidia-nat 1.7.0), NOT the research-doc's
-conceptual `PreInvoke`/`HALT_EXECUTION` (those symbols do not exist).
+Pre-execution DAG interception + suppression, built against the verified
+installed API (introspected from nvidia-nat 1.7.0); note that the
+conceptual `PreInvoke`/`HALT_EXECUTION` symbols do not exist in this version.
 
 Real mechanism:
   - Subclass nat.middleware.FunctionMiddleware.
   - `enabled` property gates execution.
   - Override `function_middleware_invoke(*args, call_next, context, **kwargs)`
-    for FULL CONTROL. To SUPPRESS the ReWOO Executor: detect the target by
-    `context.name`, serialize the planned DAG, and RETURN WITHOUT calling
+    for full control. To suppress the ReWOO Executor: detect the target by
+    `context.name`, serialize the planned DAG, and return without calling
     `call_next`. Not calling call_next is the real "halt" — clean, no exception.
   - Register as a function-middleware plugin so the WorkflowBuilder attaches it
     at the Planner->Executor boundary.
@@ -111,7 +111,7 @@ class DagExtractorMiddleware(FunctionMiddleware):
         if self._on_emit is not None:
             await _maybe_await(self._on_emit, wire)
 
-        # SUPPRESS: do NOT call_next. Return the wire JSON as the output. The
+        # Suppress: do not call call_next. Return the wire JSON as the output. The
         # local Executor never fires; the plan crosses to the edge instead.
         return wire
 

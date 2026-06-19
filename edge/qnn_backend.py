@@ -1,18 +1,18 @@
 """
-HARP · edge/qnn_backend.py · CEE-owned · MIT
+HARP · edge/qnn_backend.py · MIT
 Real edge implementation of shared/harp_contract.Backend over the Hexagon NPU.
 
-Grounding:
-  - onnxruntime-genai + onnxruntime-qnn HTP EP                      Deployment Walkthrough
-  - backend_path=QnnHtp.dll; default/CPU = silent slow fallback     §"EP Registration and DLL Linkage"
-  - SWA prefill < window -> 0xc0000409                              §"Sliding Window Mismatches"
-  - NO native timing hook; manual host-clock instrumentation        DR2 §"Timing Semantics"
-  - VLMs need compute_logits() BEFORE generate_next_token()         DR2 §"Decode Phase"
-  - max_length MUST be set or theoretical-max KV alloc crashes       DR2 §"append_tokens"
+Implementation notes:
+  - onnxruntime-genai + onnxruntime-qnn HTP EP
+  - backend_path=QnnHtp.dll; default/CPU = silent slow fallback
+  - SWA prefill < window -> 0xc0000409
+  - NO native timing hook; manual host-clock instrumentation
+  - VLMs need compute_logits() before generate_next_token()
+  - max_length MUST be set or theoretical-max KV alloc crashes
   - host clock is an UPPER bound on async NPU dispatch -> also emit
-    qnn-profiling-data.csv via profiling_level for kernel truth      DR2 §"Extracting QNN-Specific Telemetry"
+    qnn-profiling-data.csv via profiling_level for kernel truth
   - DRAM co-residency YES / VTCM exec co-residency NO; serialize via
-    SEQUENTIAL_WITH_VA_OPTIMIZATION (~0.146 ms switch)               DR3 §"Architectural Recommendations"
+    SEQUENTIAL_WITH_VA_OPTIMIZATION (~0.146 ms switch)
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ try:
 except ImportError:
     og = None
 
-# X-Elite Qwen3-4B decode target 30.3 tok/s; Oryon CPU ~8 tok/s (Profiling Guide).
+# X-Elite Qwen3-4B decode target 30.3 tok/s; Oryon CPU ~8 tok/s.
 # 15 tok/s floor cleanly separates "NPU engaged" from "silent CPU fallback".
 NPU_DECODE_FLOOR_TOK_S = 15.0
 
@@ -42,17 +42,17 @@ class QnnModelSpec:
     modality: Modality
     sliding_window: int | None = None
     pad_token_id: int = 0
-    requires_compute_logits: bool = False   # DR2: True for VLM/vision specialists
-    weight_gb: float = 0.0                   # DR3: for DRAM-residency budgeting
+    requires_compute_logits: bool = False   # True for VLM/vision specialists
+    weight_gb: float = 0.0                   # for DRAM-residency budgeting
 
 
 @dataclass
 class DetailedMetrics:
     """Richer than the frozen contract Metrics: carries the prefill/decode split
-    the Qualcomm rubric wants. profile() still returns the contract Metrics."""
+    useful for on-device profiling. profile() still returns the contract Metrics."""
     backend_id: str
     prefill_ms: float        # append_tokens() wall time (compute-bound)
-    ttft_ms: float           # t_start -> first generate_next_token (DR2 Table 1)
+    ttft_ms: float           # t_start -> first generate_next_token
     decode_tok_s: float
     tokens: int
     energy_mj_per_tok: float | None = None
@@ -73,14 +73,14 @@ class QNNBackend(Backend):
         htp_dll: str = "QnnHtp.dll",
         perf_mode: str = "burst",
         vtcm_mb: int = 0,
-        # DR3: serialize execution; one model gets 100% VTCM/HVX/HMX at a time.
+        # Serialize execution; one model gets 100% VTCM/HVX/HMX at a time.
         residency: str = "sequential",
         graph_opt_mode: str = "3",          # htp_graph_finalization_optimization_mode
         backend_id: str = "qnn-x-elite",
-        kernel_profiling: bool = False,     # DR2: emit qnn-profiling-data.csv
+        kernel_profiling: bool = False,     # emit qnn-profiling-data.csv
     ):
         self._specs = {m.model_id: m for m in models}
-        self._loaded: dict[str, "og.Model"] = {}      # DRAM co-residency cache (DR3)
+        self._loaded: dict[str, "og.Model"] = {}      # DRAM co-residency cache
         self._ram_gb = ram_gb
         self._max_context = max_context
         self._htp_dll = htp_dll
@@ -100,11 +100,11 @@ class QNNBackend(Backend):
             offline_capable=True, supports_streaming=True,
         )
 
-    # ---- DR3: load every specialist into DRAM once at startup -------------------
+    # ---- Load every specialist into DRAM once at startup -----------------------
     def warm_dram_residency(self) -> dict:
         """Preload all weights so per-query QnnContext_createFromBinary deserialize
         (multi-second from UFS/NVMe) never hits the hot path. ~2.2 GB for the
-        Whisper+Gemma+Qwen3-4B swarm — trivial vs 16 GB budget (DR3)."""
+        Whisper+Gemma+Qwen3-4B swarm — trivial vs 16 GB budget."""
         t0 = time.perf_counter()
         for mid in self._specs:
             self._model(mid)
@@ -128,13 +128,13 @@ class QNNBackend(Backend):
         cfg.set_provider_option("qnn", "backend_path", self._htp_dll)
         cfg.set_provider_option("qnn", "htp_performance_mode", self._perf_mode)
         cfg.set_provider_option("qnn", "htp_graph_finalization_optimization_mode", self._graph_opt)
-        # DR3: SEQUENTIAL_WITH_VA_OPTIMIZATION — grant full VTCM to one graph; avoids
+        # SEQUENTIAL_WITH_VA_OPTIMIZATION — grant full VTCM to one graph; avoids
         # spill-fill from oversubscribing the 8 MB scratchpad across models.
         if self._residency == "sequential":
             cfg.set_provider_option("qnn", "htp_vtcm_optimization", "SEQUENTIAL_WITH_VA_OPTIMIZATION")
         if self._vtcm_mb:
             cfg.set_provider_option("qnn", "vtcm_mb", str(self._vtcm_mb))
-        if self._kernel_profiling:                 # DR2: kernel-level latency CSV
+        if self._kernel_profiling:                 # kernel-level latency CSV
             cfg.set_provider_option("qnn", "profiling_level", "detailed")
         m = og.Model(cfg)
         self._loaded[model_id] = m
@@ -154,7 +154,7 @@ class QNNBackend(Backend):
         except Exception:
             prompt = "\n".join(m["content"] for m in req.messages)
         ids = list(tok.encode(prompt))
-        if not ids:                                # DR2: empty KV prefill can fault
+        if not ids:                                # empty KV prefill can fault
             ids = [self._specs[req.model_id].pad_token_id]
         return ids
 
@@ -167,7 +167,7 @@ class QNNBackend(Backend):
 
         params = og.GeneratorParams(model)
         params.set_search_options(
-            max_length=min(len(ids) + req.max_tokens, self._max_context),  # DR2: never unset
+            max_length=min(len(ids) + req.max_tokens, self._max_context),  # must never be unset
             past_present_share_buffer=True,
         )
         gen = og.Generator(model, params)
@@ -181,7 +181,7 @@ class QNNBackend(Backend):
 
         first = True
         while not gen.is_done():
-            if spec.requires_compute_logits:        # DR2: VLM state machine
+            if spec.requires_compute_logits:        # VLM state machine
                 gen.compute_logits()
             gen.generate_next_token()
             if first:
@@ -230,7 +230,7 @@ class QNNBackend(Backend):
         total_s = time.perf_counter() - t0
 
         decode_s = max(total_s - (ttft["v"] or 0) / 1000.0, 1e-6)
-        # DR2 Table 1: TPS = (total - 1) / (t_end - t_first_token)
+        # TPS = (total - 1) / (t_end - t_first_token)
         tok_s = max(n["v"] - 1, 0) / decode_s if n["v"] > 1 else (n["v"] / decode_s)
 
         energy = None

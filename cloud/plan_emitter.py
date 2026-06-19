@@ -1,11 +1,11 @@
 """
 HARP — Hardware-Aware Routing Platform
-cloud/plan_emitter.py  ·  CCE owns this  ·  MIT  ·  v2 (verified against DR-2)
+cloud/plan_emitter.py  ·  MIT
 
 Cloud planner -> edge executor bridge. Converts the NAT ReWOO Planner Node's
 upfront DAG into the contract's PlanGraph JSON. "We emit plans, not activations."
 
-VERIFIED interception mechanism (NeMo Agent Toolkit Workflow doc, NAT v1.7.0):
+Interception mechanism (NAT v1.7.0):
   rewoo_agent is native (nat.agent.rewoo_agent.register). The ONLY pre-execution
   interception vector is the PreInvoke MIDDLEWARE hook. IntermediateStepManager,
   callbacks, and ATIF are ALL retrospective/post-flight — unusable for pre-exec.
@@ -14,7 +14,7 @@ VERIFIED interception mechanism (NeMo Agent Toolkit Workflow doc, NAT v1.7.0):
   from input_data -> model_dump_json() -> return HALT_EXECUTION carrying the JSON.
   That cleanly bypasses the Executor Node without raising / corrupting telemetry.
 
-LOCAL steps carry edge model_ids (CAIO's domain). ESCALATE steps resolve their
+LOCAL steps carry edge model_ids. ESCALATE steps resolve their
 cloud model from the Manager/Worker registry — no hardcoded strings here.
 """
 
@@ -39,7 +39,7 @@ class RawReWOOStep:
     hint: str | None = None          # planner-attached tier hint: 'edge'|'cloud'
 
 
-# tool -> (modality, edge model_id used when the step stays LOCAL). CAIO owns these.
+# tool -> (modality, edge model_id used when the step stays LOCAL)
 _EDGE_BINDING: dict[str, tuple[Modality, str]] = {
     "asr_transcribe": (Modality.AUDIO,  "whisper-base"),
     "vision_screen":  (Modality.VISION, "vision-specialist"),
@@ -105,26 +105,28 @@ def from_wire(blob: str) -> PlanGraph:
                  s["model_id"], s["prompt"], list(s.get("depends_on", []))) for s in o["steps"]])
 
 
-# ---------------------------------------------------------------- PreInvoke middleware skeleton (NAT v1.7)
-# Real integration target. Lands in a PEP-420 ns pkg: nat.plugins.dag_extractor.
-# Subscribes to PreInvoke; fires exactly at the Planner->Executor hand-off.
+# ---------------------------------------------------------------- DAG-extractor middleware (NAT)
+# The REAL, working implementation lives in cloud/dag_extractor_middleware.py.
+# WARNING: NAT has NO `BaseMiddleware` / `PreInvoke` / `HALT_EXECUTION` symbols —
+# that was a hallucinated API. The real interception subclasses
+# nat.middleware.FunctionMiddleware and "halts" by simply NOT calling call_next.
+# This string is illustrative only; build against the real module, not this.
 _PREINVOKE_MIDDLEWARE_SKELETON = '''
-# nat/plugins/dag_extractor/middleware.py   (NAT v1.7.0)
-from nat.builder.middleware import BaseMiddleware, PreInvoke, HALT_EXECUTION  # framework base
-from harp.cloud.plan_emitter import RawReWOOStep, emit_plan_graph, to_wire
+# cloud/dag_extractor_middleware.py   (real NAT FunctionMiddleware API)
+from nat.middleware import FunctionMiddleware, CallNext, FunctionMiddlewareContext
 
-class DagExtractorMiddleware(BaseMiddleware):
-    hook = PreInvoke
-    def on_pre_invoke(self, ctx):
-        # fire only at the ReWOO Executor boundary, not on every tool call
-        if "rewoo_agent" not in ctx.target_function_or_group:
-            return None
-        dag = ctx.input_data          # parsed Dependency Graph dict from Planner Node
-        raw = [RawReWOOStep(n["id"], n["tool"], n["args"], n.get("deps", []), n.get("hint"))
-               for n in dag["nodes"]]
-        wire = to_wire(emit_plan_graph(dag.get("plan_id", "plan"), raw))
-        # suppress local execution, carry the serialized DAG back up the stack
-        return HALT_EXECUTION(payload=wire)
+class DagExtractorMiddleware(FunctionMiddleware):
+    async def function_middleware_invoke(self, *args, call_next, context, **kwargs):
+        # fire only at the ReWOO executor boundary, not every tool call
+        if "rewoo" not in (getattr(context, "function_context", None).name or ""):
+            return await call_next(*args, **kwargs)
+        dag = ...                                # the planned DAG from the planner node
+        wire = to_wire(emit_plan_graph(
+            dag["plan_id"],
+            [RawReWOOStep(n["id"], n["tool"], n["args"], n.get("deps", []), n.get("hint"))
+             for n in dag["nodes"]]))
+        # NOT calling call_next IS the halt — suppresses NAT's local execution.
+        return wire
 '''
 
 

@@ -1,6 +1,29 @@
+# OS / editor
 .DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Local tooling / agent config
+.claude/
+
+# Working notes & decks kept out of the public repo
 docs/
-HARP_CCE_TESTING_KEY.md
-HARP_CEE_TESTING_KEY.pem
-__pycache__
+
+# Build artifacts & large binaries
 build/
+*.exe
+*.zip
+
+# Secrets, credentials, local test keys — never commit these
+*.pem
+*_TESTING_KEY.*
+
+# Generated benchmark evidence
+evidence_pack*.md
+evidence_pack*.json

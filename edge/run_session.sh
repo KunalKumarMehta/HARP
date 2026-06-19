@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# HARP · edge/run_session.sh · CEE-owned · MIT
-# One-shot QDC X Elite Risk-A session. Each QDC reservation = ONE command.
+# HARP · edge/run_session.sh · MIT
+# One-shot QDC X Elite benchmark session. Each QDC reservation = ONE command.
 # Minutes are scarce (5,000 total); this script does the slow prep on YOUR host
 # and spends device time only on env-check + bench.py.
 #
@@ -36,8 +36,8 @@ ${SSH} "python -c 'import onnxruntime_genai, onnxruntime; print(\"ARM64 runtime 
 ${SSH} "python -c \"import ctypes,mmap; mmap.mmap(-1,0,tagname='Global\\\\HWiNFO_SENS_SM2',access=mmap.ACCESS_READ); print('HWiNFO SM2 reachable')\"" \
   || echo 'WARN: HWiNFO SM2 not reachable — energy will be null; start HWiNFO + enable Shared Memory, or use CsvFallbackSampler'
 
-# --- [3] RUN RISK A (the only step that justifies device time) ---
-echo "==> [3] bench.py — Risk A gate + swarm residency"
+# --- [3] RUN BENCHMARK (the only step that justifies device time) ---
+echo "==> [3] bench.py — benchmark execution"
 ${SSH} "cd ${REMOTE} && python bench.py" | tee session_stdout.log
 
 # --- [4] pull evidence pack back ---

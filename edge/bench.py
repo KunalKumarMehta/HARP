@@ -1,22 +1,33 @@
-"""
-HARP · edge/bench.py · CEE-owned · MIT
+﻿"""
+HARP · edge/bench.py · MIT
 Risk-A gate instrument + Qualcomm "energy efficiency" evidence engine.
 
 Grounding:
-  - prefill TTFT (compute) vs decode tok/s (bandwidth) reported separately   Profiling Guide §"Deconstructing TTFT"
-  - energy/token = ∫P dt / N, idle-baseline subtracted                        §"Energy-per-Token"
-  - A/B NPU-vs-CPU split-screen is the canonical winning artifact             §"Strategy 3"
-  - swarm = DRAM co-residency + SEQUENTIAL prompt-chain, NOT concurrent exec   DR3 §"Architectural Recommendations"
+  - prefill TTFT (compute) vs decode tok/s (bandwidth) reported separately
+  - energy/token = ∫P dt / N, idle-baseline subtracted
+  - A/B NPU-vs-CPU split-screen is the clearest side-by-side comparison artifact
+  - swarm = DRAM co-residency + SEQUENTIAL prompt-chain, NOT concurrent exec
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import time
 from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Protocol, runtime_checkable
+
+# Run-anywhere bootstrap: put the repo root on sys.path so `from shared.…` and
+# `from edge.…` both resolve whether invoked as `python -m edge.bench`,
+# `python edge/bench.py`, or `python bench.py` from inside edge/. Removes the
+# previous PYTHONPATH gymnastics the sibling `from qnn_backend import` required.
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
 from shared.harp_contract import InferRequest, Modality
-from qnn_backend import DetailedMetrics, QNNBackend, QnnModelSpec
+from edge.qnn_backend import DetailedMetrics, QNNBackend, QnnModelSpec
 
 GATE_PROBE = InferRequest(
     messages=[{"role": "user",
@@ -34,8 +45,16 @@ class GateResult:
     note: str
 
 
+@runtime_checkable
+class ProfilableBackend(Protocol):
+    """The backend-agnostic surface this harness needs — satisfied by both
+    QNNBackend (self-compiled ONNX) and GenieBackend (precompiled context binary)."""
+    async def profile_detailed(self, req: InferRequest, **kw) -> DetailedMetrics: ...
+    def assert_npu_engaged(self, metrics) -> None: ...
+
+
 # ---- Risk A gate ------------------------------------------------------------
-async def run_gate(backend: QNNBackend, *, power=None, baseline_w: float = 0.0,
+async def run_gate(backend: ProfilableBackend, *, power=None, baseline_w: float = 0.0,
                    thermal_fn=None, probe: InferRequest = GATE_PROBE) -> GateResult:
     dm = await backend.profile_detailed(probe, power=power, baseline_w=baseline_w,
                                         thermal_fn=thermal_fn)
@@ -50,17 +69,18 @@ async def run_gate(backend: QNNBackend, *, power=None, baseline_w: float = 0.0,
 
 
 # ---- A/B NPU vs CPU ---------------------------------------------------------
-async def run_ab(npu: QNNBackend, cpu: QNNBackend, *, npu_power=None, cpu_power=None,
-                 baseline_w: float = 0.0, probe: InferRequest = GATE_PROBE) -> dict:
+async def run_ab(npu: ProfilableBackend, cpu: ProfilableBackend, *, npu_power=None,
+                 cpu_power=None, baseline_w: float = 0.0,
+                 probe: InferRequest = GATE_PROBE) -> dict:
     n = await npu.profile_detailed(probe, power=npu_power, baseline_w=baseline_w)
     c = await cpu.profile_detailed(probe, power=cpu_power, baseline_w=baseline_w)
     return {"npu": n, "cpu": c,
             "decode_speedup_x": (n.decode_tok_s / c.decode_tok_s) if c.decode_tok_s else float("inf")}
 
 
-# ---- DR3: DRAM co-residency + SEQUENTIAL prompt-chain (replaces concurrent) --
+# ---- DRAM co-residency + SEQUENTIAL prompt-chain (replaces concurrent) -------
 async def run_swarm_residency(backend: QNNBackend, chain: list[tuple[str, Modality, str]]) -> dict:
-    """Proves the swarm pattern DR3 prescribes:
+    """Proves the swarm pattern:
       1) warm: all weights co-resident in DRAM (no per-query deserialize).
       2) chain: Whisper -> Gemma -> Qwen3-4B SEQUENTIALLY on one HTP. Per-stage
          latency + inter-stage gap (the ~0.146 ms VTCM context switch). NOT
@@ -125,7 +145,7 @@ def render_evidence_pack(gate: GateResult, ab: dict | None = None,
 
     if swarm:
         d = swarm["dram"]
-        L += ["\n## Swarm Multitenancy (DR3: DRAM co-resident + sequential exec)",
+        L += ["\n## Swarm Multitenancy (DRAM co-resident + sequential exec)",
               f"DRAM co-residency: **{len(d['loaded'])} models, {d['weight_gb']} GB resident "
               f"in {d['load_s']} s** (one-time; no per-query deserialize).",
               f"Sequential chain total: **{swarm['chain_ms']} ms** · "
@@ -136,9 +156,9 @@ def render_evidence_pack(gate: GateResult, ab: dict | None = None,
             L.append(f"| {i} | {s['model_id']} | {'✅' if s['ok'] else '❌'} | {s['tokens']} | "
                      f"{s['stage_ms']} | {s['switch_in_ms'] if s['switch_in_ms'] is not None else '—'} |")
         L.append("\n_Concurrent HTP execution is deliberately avoided: 12 MB combined "
-                 "activation > 8 MB VTCM → spill-fill thrashing (DR3)._")
+                 "activation > 8 MB VTCM → spill-fill thrashing._")
 
-    L += ["\n## Rubric mapping (40% Technical Implementation)",
+    L += ["\n## Technical Implementation Summary",
           "- **Latency** → prefill / TTFT / decode tok/s split above.",
           "- **Energy efficiency** → mJ/token + NPU-rail watts, baseline-isolated.",
           "- **Heterogeneous orchestration** → NPU-only LLM path proven via A/B vs CPU.",
@@ -148,7 +168,9 @@ def render_evidence_pack(gate: GateResult, ab: dict | None = None,
 
 
 def write_artifacts(gate: GateResult, ab, swarm, md_path: str, json_path: str) -> None:
-    with open(md_path, "w") as f:
+    # with open(md_path, "w") as f:
+    #     f.write(render_evidence_pack(gate, ab, swarm))
+    with open(md_path, "w", encoding="utf-8") as f:
         f.write(render_evidence_pack(gate, ab, swarm))
     blob = {
         "gate": {"passed": gate.passed, "note": gate.note,
@@ -158,12 +180,14 @@ def write_artifacts(gate: GateResult, ab, swarm, md_path: str, json_path: str) -
                 "decode_speedup_x": ab["decode_speedup_x"]} if ab else None),
         "swarm": swarm,
     }
-    with open(json_path, "w") as f:
+    # with open(json_path, "w") as f:
+    #     json.dump(blob, f, indent=2, default=str)
+    with open(json_path, "w", encoding="utf-8") as f:
         json.dump(blob, f, indent=2, default=str)
 
 
 async def main():
-    from power import get_sampler
+    from edge.power import get_sampler
     backend = QNNBackend(models=[
         QnnModelSpec("whisper-base", "./models/whisper-base", Modality.AUDIO, weight_gb=0.07),
         QnnModelSpec("embeddinggemma-300m", "./models/egemma-300m", Modality.TEXT, weight_gb=0.30),

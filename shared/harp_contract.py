@@ -1,17 +1,18 @@
 """
 HARP — Hardware-Aware Routing Platform
-shared/harp_contract.py  ·  CONTRACT FREEZE v0  ·  MIT
+shared/harp_contract.py  ·  MIT
 
-This module is the integration spine. CEE implements `Backend` over QNN.
-CCE implements `Backend` over NIM. CAIO's router consumes `PlanGraph` and
-selects a backend through `capabilities()` — never by importing a concrete
-backend. Freeze this file at spike start; changes require CTO sign-off.
+This module is the integration spine. The edge backend implements `Backend`
+over QNN; the cloud backend implements it over NIM. The router consumes
+`PlanGraph` and selects a backend through `capabilities()` — never by
+importing a concrete backend. This interface is intentionally stable;
+changes here are deliberately rare.
 
-Design grounding:
-  - Unified inference contract + capability negotiation  -> AI Runtime Abstraction doc
-  - OpenAI-compatible message payload as the boundary lingua franca -> Nexa shim pattern
-  - Plan-graph DAG, JSON wire (Protobuf = scale roadmap, NOT built) -> Agentic Systems doc
-  - Four-state offline machine (pending/in_flight/success/conflict) -> Agentic Systems doc
+Design notes:
+  - Unified inference contract + capability negotiation
+  - OpenAI-compatible message payload as the boundary lingua franca (Nexa shim pattern)
+  - Plan-graph DAG, JSON wire (Protobuf = scale roadmap, NOT built)
+  - Four-state offline machine (pending/in_flight/success/conflict)
 """
 
 from __future__ import annotations
@@ -81,7 +82,7 @@ class InferRequest:
 
 @dataclass
 class Metrics:
-    """CEE's 40% Qualcomm score lives here. profile() must populate ttft/tok-s
+    """On-device performance metrics live here. profile() must populate ttft/tok-s
     on every backend; energy/thermal are edge-only and may be None on cloud."""
     backend_id: str
     ttft_ms: float
@@ -91,7 +92,7 @@ class Metrics:
 
 
 class Backend(ABC):
-    """THE contract. Two real implementations: QNNBackend (CEE), NIMBackend (CCE).
+    """THE contract. Two real implementations: QNNBackend (edge), NIMBackend (cloud).
     Apple/AMD are stubbed behind this same interface — narrative only, not built."""
 
     @abstractmethod
@@ -145,8 +146,8 @@ class PlanGraph:
 
 class Router:
     """Proves the one-call swap: caller hits dispatch(), router picks the backend
-    by negotiating capabilities + applying the offline/hardware guard. CAIO's
-    learned policy slots in at `_decide` later; this is the deterministic floor."""
+    by negotiating capabilities + applying the offline/hardware guard. A
+    learned policy can slot in at `_decide` later; this is the deterministic floor."""
 
     def __init__(self, edge: Backend, cloud: Backend, online: bool = True):
         self.edge = edge
@@ -178,7 +179,7 @@ class Router:
         return self.edge
 
 
-# ---------------------------------------------------------------- mock backends (unblock parallel work TODAY)
+# ---------------------------------------------------------------- mock backends (unblock parallel work)
 
 class _MockBackend(Backend):
     def __init__(self, cap: Capability, ttft_ms: float, tok_s: float):
@@ -222,7 +223,7 @@ def mock_cloud() -> Backend:
         ttft_ms=300, tok_s=120)
 
 
-# ---------------------------------------------------------------- smoke test (CTO test mandate #1)
+# ---------------------------------------------------------------- smoke test
 
 async def _smoke() -> None:
     plan = PlanGraph("p0", [
@@ -242,7 +243,7 @@ async def _smoke() -> None:
     out = "".join([t async for t in r_off.dispatch(plan.steps[2])])  # an ESCALATE step
     print(f"  s3 forced local -> {out.strip()}")
 
-    print("\n== profile() carries the Qualcomm 40% metrics ==")
+    print("\n== profile() carries the on-device performance metrics ==")
     m = await mock_edge().profile(InferRequest([{"role": "user", "content": "hi"}], "qwen3-4b"))
     print(f"  {m.backend_id}: ttft={m.ttft_ms}ms  tok/s={m.tokens_per_s:.1f}  "
           f"energy={m.energy_mj_per_tok}mJ/tok  thermal={m.thermal_c}C")

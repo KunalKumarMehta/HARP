@@ -1,10 +1,10 @@
 """
 HARP — Hardware-Aware Routing Platform
-cloud/model_registry.py  ·  CCE owns this  ·  MIT
+cloud/model_registry.py  ·  MIT
 
 Manager/Worker tier abstraction. Backend logic NEVER hardcodes a model string;
 it resolves a ROLE through this registry. Swapping a model is a config edit
-here, not a code change anywhere else. CTO's generalization mandate lives here.
+here, not a code change anywhere else.
 
 Identifiers below are VERIFIED against the June-2026 build.nvidia.com catalog
 (see NVIDIA Nemotron NIM Specifications doc). They are config defaults, not
@@ -51,7 +51,7 @@ _DEFAULTS: dict[Role, ModelSpec] = {
         note="120B(12B) LatentMoE, 1M ctx, NVFP4. Apex planner; enable_thinking for DAG synthesis."),
     Role.MANAGER_PRAGMATIC: ModelSpec(
         "nvidia/llama-3.3-nemotron-super-49b-v1.5", 131_072, reasoning=True, multimodal=False,
-        note="49B dense, fits 1xH100, strong tool-calling. Free-tier hackathon planner default."),
+        note="49B dense, fits 1xH100, strong tool-calling. Default cloud planner."),
     Role.WORKER_GENERAL: ModelSpec(
         "nvidia/nemotron-3-nano-30b-a3b", 128_000, reasoning=False, multimodal=False,
         note="30B(3.5B active), high-throughput sub-agent / Solver Node."),
@@ -60,13 +60,13 @@ _DEFAULTS: dict[Role, ModelSpec] = {
         note="Collapses ASR+vision+text into one loop. One cloud worker serves all 3 swarm modalities."),
     Role.WORKER_LIGHT: ModelSpec(
         "nvidia/llama-3.1-nemotron-nano-4b-v1.1", 131_072, reasoning=False, multimodal=False,
-        note="4B, FP8/NVFP4, function-calling. Distillation-student candidate for edge handoff to CAIO."),
+        note="4B, FP8/NVFP4, function-calling. Lightweight model for edge deployment."),
     Role.RAG_EMBED: ModelSpec(
         "nvidia/llama-nemotron-embed-vl-1b-v2", 0, reasoning=False, multimodal=True,
         endpoint="embeddings", note="Multimodal PDF/chart embedding -> 2048-dim vectors."),
     Role.RAG_RERANK: ModelSpec(
         "nvidia/llama-nemotron-rerank-1b-v2", 0, reasoning=False, multimodal=False,
-        endpoint="ranking", note="Cross-encoder rerank; Recall@5 grounding for the planner."),
+        endpoint="ranking", note="Cross-encoder rerank for retrieval ranking."),
 }
 
 
@@ -82,7 +82,7 @@ def resolve(role: Role) -> ModelSpec:
 
 
 # Maps the planner's tool name -> the cloud Role that should serve it when a step
-# escalates. CAIO owns the edge-side model_ids; CCE owns this cloud-side binding.
+# escalates.
 TOOL_TO_ROLE: dict[str, Role] = {
     "asr_transcribe": Role.WORKER_MULTIMODAL,
     "vision_screen":  Role.WORKER_MULTIMODAL,

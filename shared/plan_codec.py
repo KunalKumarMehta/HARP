@@ -2,7 +2,7 @@
 HARP — Hardware-Aware Routing Platform
 shared/plan_codec.py  ·  PlanGraph wire codec  ·  MIT
 
-The single serialization boundary for the cloud->edge plan handoff. CCE's
+The single serialization boundary for the cloud->edge plan handoff. The cloud
 ATIF->PlanGraph adapter emits through to_wire(); the edge executor parses
 through from_wire(). One codec, both sides — neither hand-rolls JSON.
 
@@ -10,13 +10,13 @@ Validation is two-layered because JSON Schema alone is insufficient:
   - SHAPE  (plan_schema.json): types, enums, required keys, additionalProperties.
     Uses `jsonschema` when installed (CI rigor); falls back to a dependency-free
     structural check so the edge runtime ships clean on Windows ARM64 (no
-    win_arm64 wheel risk — same minimal-dependency mandate as the fabric).
+    win_arm64 wheel risk — same minimal-dependency design rule as the fabric).
   - SEMANTICS (here, in code): JSON Schema cannot express a DAG. We enforce
     unique step_ids, referential integrity of depends_on, and acyclicity
     (via PlanGraph.topo_order) — the constraints that actually break an executor.
 
 ATIF richness (Step.extra: timeouts, hardware hints) collapses to the six wire
-fields at CCE's adapter; `decision` is the only thing derived from extra that
+fields at the cloud adapter; `decision` is the only thing derived from extra that
 crosses the wire. The schema stays NVIDIA-agnostic by design. If hardware hints
 must reach the edge later, that is an explicit schema rev (optional `hints`),
 not a silent additionalProperties leak.

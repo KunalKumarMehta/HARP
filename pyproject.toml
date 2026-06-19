@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "harp-runtime"
+version = "0.1.0"
+description = "Hardware-Aware Routing Platform — a hardware-agnostic agentic runtime that routes each task to the right model on the right tier (on-device NPU vs. cloud planner) with graceful offline fallback."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "HARP contributors" }]
+keywords = [
+  "agentic-ai", "llm-routing", "edge-ai", "on-device", "npu",
+  "inference", "nemo", "nim", "nemotron", "qnn", "snapdragon",
+]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Intended Audience :: Developers",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# Core runtime runs on the standard library only — the plan codec and the
+# fabric transport both ship stdlib fallbacks, so `import` and the demo work
+# with zero third-party dependencies. The extras below add the stricter paths
+# CI exercises (JSON-schema validation, the WebSocket fabric, the NIM client).
+dependencies = []
+
+[project.optional-dependencies]
+full = ["jsonschema>=4", "websockets>=12", "httpx>=0.27"]
+dev = ["jsonschema>=4", "websockets>=12", "httpx>=0.27", "ruff>=0.4"]
+
+[project.urls]
+Homepage = "https://github.com/KunalKumarMehta/HARP"
+Repository = "https://github.com/KunalKumarMehta/HARP"
+
+[tool.setuptools]
+packages = ["shared", "router", "cloud", "edge", "fabric", "demo"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

@@ -3,8 +3,8 @@ HARP — shared/conformance.py  ·  Backend contract enforcement  ·  MIT
 
 Closes the CI hole: the smoke test proves the MOCKS conform, but a real
 QNNBackend / NIMBackend that drifts from the `Backend` ABC must fail the gate
-too. CEE and CCE import assert_conforms() in their own test and the gate runs
-it on edge/** and cloud/** changes.
+too. Edge and cloud backend test suites import assert_conforms() and the gate
+runs it on edge/** and cloud/** changes.
 """
 
 from __future__ import annotations
