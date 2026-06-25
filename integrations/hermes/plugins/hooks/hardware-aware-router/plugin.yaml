@@ -1,0 +1,5 @@
+name: hardware-aware-router
+kind: hook
+version: 0.1.0
+description: Per-turn hardware-aware routing — on-device NPU vs cloud planner — via Hermes pre_llm_call
+author: HARP
