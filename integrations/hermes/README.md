@@ -30,6 +30,33 @@ offline fallback either way. HARP looks like one OpenAI-compatible model.
    Models exposed: `harp-auto` (router decides), `harp-edge` (pin NPU),
    `harp-cloud` (pin cloud).
 
+## Routing hook (`pre_llm_call`) — routing as a per-turn decision
+
+The provider above lets you *select* HARP. The **hook** makes HARP decide *every
+turn automatically*: before each LLM call it asks HARP `POST /v1/route` and, on a
+LOCAL verdict, pins that one turn to the NPU lane (`harp-edge`) via a request-scoped
+`runtime_override`; on ESCALATE it returns `None` and your configured primary cloud
+model (Nemotron/NIM) handles the turn.
+
+1. **Drop the hook in** (alongside the provider):
+   ```sh
+   cp -r integrations/hermes/plugins/hooks/hardware-aware-router \
+         "$HERMES_HOME/plugins/hooks/hardware-aware-router"
+   ```
+2. **Point it at HARP** (same var as the provider):
+   ```sh
+   export HARP_BASE_URL="http://127.0.0.1:8765/v1"
+   ```
+3. **Set your primary model to the cloud planner.** In Hermes, configure the
+   primary as `nvidia-nim` / Nemotron. LOCAL turns get overridden to `harp-edge`;
+   ESCALATE turns fall through to this primary.
+
+The hook is fail-safe: the `/route` call has a 0.4 s timeout and returns `None` on
+any error, so a slow or down router never stalls a turn. It never mutates the
+conversation history or system prompt — only appends one ephemeral telemetry line
+on local turns. See `integrations/skills/hardware-aware-router/SKILL.md` for the
+agentskills.io packaging and the OpenClaw stdout path.
+
 ## Why `default_aux_model = harp-edge`
 
 Hermes runs an *aux lane* for background work — conversation summarization,
