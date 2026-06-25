@@ -117,6 +117,16 @@ def _default_policy() -> RoutingPolicy:
     return RoutingPolicy().calibrate(cal_u, cal_err)
 
 
+def _classifier_name(state) -> str:
+    """Name of the active complexity score_fn behind the AUTO gate. The default
+    mock_score_fn (token length + complexity-keyword count) is a PLACEHOLDER for the
+    trained mmBERT-small encoder head — surfaced on /health for demo transparency."""
+    fn = getattr(state.policy, "score_fn", None)
+    name = getattr(fn, "__name__", "unknown")
+    placeholder = " (placeholder for mmBERT-small head)" if name == "mock_score_fn" else ""
+    return f"{name}{placeholder}"
+
+
 # ---------------------------------------------------------------- runtime state
 
 @dataclass
@@ -129,6 +139,7 @@ class EndpointState:
     exec_est_s: float
     escalate_disabled: bool
     local_model_id: str
+    base_url: str                 # this endpoint's own /v1 base — emitted in runtime_override
     npu_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     committed_local: int = 0      # infers committed to the NPU lane (incl. in-flight)
     inflight: bool = False        # an NPU infer is currently running
@@ -195,14 +206,22 @@ class _Route:
 
 
 def _resolve_route(state: EndpointState, model: str, query: str, tools: list | None,
-                   modality: Modality) -> _Route:
+                   modality: Modality, *, inflight: bool | None = None,
+                   queue_depth: int | None = None) -> _Route:
     """Pin or policy -> tier, then the operational single-flight shed. Returns the
-    final lane. Synchronous: the busy()/commit_local() pair must not be split by an
-    await, so the whole decision runs here and the caller commits immediately."""
+    final lane. Synchronous and SIDE-EFFECT-FREE (no commit_local) — the live
+    handler commits immediately after, and the advisory /v1/route reuses it as-is.
+
+    inflight/queue_depth default to live lane state; /v1/route passes hints so a
+    caller can introspect "what would HARP do if the NPU were busy" without
+    touching real state."""
+    depth = state.committed_local if queue_depth is None else max(0, queue_depth)
+    busy = state.busy() if inflight is None else (bool(inflight) or depth > 0)
+    proj_wait = depth * state.exec_est_s
     pin = _MODEL_PINS.get(model, RouteDecision.AUTO)
 
     if pin == RouteDecision.ESCALATE and state.escalate_available:
-        return _Route(Tier.CLOUD, "model_pin", shed=False, npu_inflight=state.busy())
+        return _Route(Tier.CLOUD, "model_pin", shed=False, npu_inflight=busy)
     if pin == RouteDecision.ESCALATE:        # pinned cloud but offline -> fail to local
         tier = Tier.EDGE
         reason = "pin_cloud_offline_fallback"
@@ -214,7 +233,7 @@ def _resolve_route(state: EndpointState, model: str, query: str, tools: list | N
             query=query, modality=modality, online=state.escalate_available,
             npu_present=True, edge_modalities=(Modality.TEXT, Modality.AUDIO),
             edge_max_context=4096, approx_tokens=max(1, len(query) // 4),
-            npu_inflight=state.busy(), npu_queue_depth=state.committed_local,
+            npu_inflight=busy, npu_queue_depth=depth,
             tools_present=bool(tools), offline=not state.escalate_available,
         )
         verdict = state.policy.decide(f)
@@ -223,13 +242,13 @@ def _resolve_route(state: EndpointState, model: str, query: str, tools: list | N
 
     # Operational overflow shed: even after routing says LOCAL, if the lane is busy
     # NOW and projected wait blows the TTFT budget and escalate is available, shed.
-    if tier == Tier.EDGE and state.escalate_available and state.busy() \
-            and state.projected_wait_s() > state.ttft_budget_s:
+    if tier == Tier.EDGE and state.escalate_available and busy \
+            and proj_wait > state.ttft_budget_s:
         return _Route(Tier.CLOUD, "overflow_shed", shed=True, npu_inflight=True)
 
     if tier == Tier.EDGE:
-        return _Route(Tier.EDGE, reason, shed=False, npu_inflight=state.busy())
-    return _Route(Tier.CLOUD, reason, shed=False, npu_inflight=state.busy())
+        return _Route(Tier.EDGE, reason, shed=False, npu_inflight=busy)
+    return _Route(Tier.CLOUD, reason, shed=False, npu_inflight=busy)
 
 
 # ---------------------------------------------------------------- response assembly
@@ -336,6 +355,7 @@ def make_app(
     exec_est_s: float | None = None,
     escalate_disabled: bool | None = None,
     local_model_id: str | None = None,
+    base_url: str | None = None,
 ) -> FastAPI:
     """Build the endpoint. Backends/policy are injectable for tests; defaults wire
     the real genie swarm + NIM cloud lane lazily (no network until called)."""
@@ -359,6 +379,7 @@ def make_app(
         else _env_float("HARP_NPU_EXEC_EST_S", 3.0),
         escalate_disabled=disabled,
         local_model_id=local_model_id or os.getenv("HARP_LOCAL_MODEL", "qwen3-4b"),
+        base_url=base_url or os.getenv("HARP_BASE_URL", "http://127.0.0.1:8765/v1"),
     )
 
     @app.get("/v1/models")
@@ -380,7 +401,39 @@ def make_app(
             "npu_present": npu_present,
             "escalate_available": state.escalate_available,
             "queue_depth": state.committed_local,
+            # Transparency: the active complexity classifier behind the AUTO gate.
+            # mock_score_fn is a documented placeholder for the trained mmBERT head.
+            "route_classifier": _classifier_name(state),
         }
+
+    @app.post("/v1/route")
+    async def route(request: Request):
+        """Advisory, side-effect-free routing introspection — NO inference, NO
+        commit_local. The Hermes pre_llm_call hook posts here every turn to decide
+        on-device (NPU) vs cloud planner. runtime_override is present ONLY on a local
+        decision (provider=harp, model=harp-edge); on escalate it is null and the
+        hook returns None so Hermes' primary model (Nemotron/NIM) handles the turn."""
+        state: EndpointState = app.state.harp
+        body = await request.json()
+        messages = body.get("messages") or []
+        if not messages:
+            return JSONResponse({"error": "messages is required"}, status_code=400)
+        model = body.get("model") or DEFAULT_MODEL
+        tools = body.get("tools") or None
+        inflight = bool(body["npu_inflight"]) if "npu_inflight" in body else None
+        queue_depth = int(body["npu_queue_depth"]) if "npu_queue_depth" in body else None
+        query = next((m.get("content", "") for m in reversed(messages)
+                      if m.get("role") == "user"), "")
+
+        r = _resolve_route(state, model, query, tools, Modality.TEXT,
+                           inflight=inflight, queue_depth=queue_depth)
+        decision = "local" if r.tier == Tier.EDGE else "escalate"
+        override = None
+        if decision == "local":
+            override = {"provider": "harp", "model": "harp-edge",
+                        "base_url": state.base_url, "api_mode": "chat_completions"}
+        return {"tier": r.tier.value, "reason": r.reason, "shed": r.shed,
+                "decision": decision, "runtime_override": override}
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request):
