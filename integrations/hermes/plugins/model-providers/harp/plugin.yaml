@@ -1,0 +1,5 @@
+name: harp
+kind: model-provider
+version: 0.1.0
+description: HARP — hardware-aware NPU/cloud routing as an OpenAI-compatible provider
+author: HARP
