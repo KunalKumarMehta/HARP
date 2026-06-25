@@ -187,6 +187,53 @@ jobs:
       - name: Run hermes provider
         run: python tests/test_hermes_provider.py
 
+  # Gate 13: Advisory /v1/route + Hermes pre_llm_call hook
+  # Covers: side-effect-free routing introspection; hook fail-safe + **kwargs contract
+  route-and-hook:
+    name: "Gate 13: Route + Hook"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install -q fastapi httpx
+      - name: Advisory /v1/route endpoint
+        run: python tests/test_route_endpoint.py
+      - name: pre_llm_call routing hook (mocked /route)
+        run: python tests/test_pre_llm_call_hook.py
+
+  # Gate 14: agentskills.io packaging (integrations/skills)
+  # Covers: SKILL.md frontmatter, plugin.yaml kind, hardware_probe graceful (stdlib)
+  skill-packaging:
+    name: "Gate 14: Skill Packaging"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run skill packaging
+        run: python tests/test_skill_packaging.py
+
+  # Gate 15: Track-A live-demo artifact (demo/track_a_routing_demo)
+  # Covers: 6-turn routing table + trace.jsonl with a real local/escalate split
+  track-a-demo:
+    name: "Gate 15: Track-A Demo"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install -q fastapi httpx
+      - name: Run Track-A routing demo test
+        run: python tests/test_track_a_demo.py
+      - name: Run the demo end-to-end (prints the routing table)
+        run: python demo/track_a_routing_demo.py
+
   # Full demo integration test (runs last, validates the whole spine)
   demo-integration:
     name: "Demo: Full Spine"
@@ -212,7 +259,7 @@ jobs:
   all-gates:
     name: "✅ All Gates Pass"
     runs-on: ubuntu-latest
-    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend, serve-endpoint, router-contention, hermes-provider, demo-integration]
+    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend, serve-endpoint, router-contention, hermes-provider, route-and-hook, skill-packaging, track-a-demo, demo-integration]
     if: always()
     steps:
       - name: Check all gates
@@ -229,8 +276,11 @@ jobs:
              [[ "${{ needs.serve-endpoint.result }}" != "success" ]] ||
              [[ "${{ needs.router-contention.result }}" != "success" ]] ||
              [[ "${{ needs.hermes-provider.result }}" != "success" ]] ||
+             [[ "${{ needs.route-and-hook.result }}" != "success" ]] ||
+             [[ "${{ needs.skill-packaging.result }}" != "success" ]] ||
+             [[ "${{ needs.track-a-demo.result }}" != "success" ]] ||
              [[ "${{ needs.demo-integration.result }}" != "success" ]]; then
             echo "::error::One or more gates failed"
             exit 1
           fi
-          echo "All 12 gates + demo integration passed"
+          echo "All 15 gates + demo integration passed"

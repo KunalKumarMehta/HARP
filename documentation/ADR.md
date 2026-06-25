@@ -155,3 +155,33 @@ memory compaction) — latency-tolerant and constant. **Decision:** The provider
 **Consequences:** Background work stays on-device (private, free, no round-trip) and is
 the single-stream NPU sweet spot; single-flight + overflow-shed keep it from contending
 with the foreground lane, which stays `harp-auto` and free to escalate.
+
+## ADR-0018 — Routing brain centralized; `/v1/route` is the single source of truth
+**Context:** Track-A needs routing to be a visible, per-turn agentic decision, wired
+into Hermes via a `pre_llm_call` hook. A hook that embeds its own classifier would
+**drift** from the model the endpoint actually serves. **Decision:** Add an advisory,
+side-effect-free `POST /v1/route` (no inference, no `commit_local` — it reuses the
+existing `_resolve_route`). The Hermes hook is a thin adapter: it POSTs the turn to
+`/v1/route` and forwards the returned `runtime_override`; it embeds **no** classifier.
+**Status:** Accepted. **Consequences:** One routing brain (`router/router_policy.py`),
+queried over HTTP; the hook can never disagree with the served model. The `/route` call
+is on the hot path, so the hook uses a 0.4 s timeout and fails safe to `None`.
+
+## ADR-0019 — ESCALATE returns `None`; the Hermes primary handles cloud turns natively
+**Context:** On a local decision the hook overrides the turn to the `harp` provider; on
+escalate it must hand off to the cloud. HARP's own endpoint tool path is Tier-0 and out
+of scope this pass. **Decision:** On ESCALATE the hook returns `None` (passive) so
+Hermes' configured **primary** model — Nemotron via NIM — handles the turn natively,
+tools and all. The demo deliberately avoids local tool turns. **Status:** Accepted.
+**Consequences:** Tool-calling correctness rides on the mature NIM path, not the
+endpoint's local tool path; the Track-A demo stays clean. Routing local tool turns
+through the endpoint is tracked separately (Tier-0).
+
+## ADR-0020 — `/route` complexity classifier is a documented placeholder for the mmBERT head
+**Context:** The trained mmBERT-small encoder head is not wired yet; `RoutingPolicy`
+ships `mock_score_fn` (token length + complexity-keyword count). **Decision:** `/v1/route`
+reuses the SAME calibrated `RoutingPolicy` (no second classifier), and `GET /health`
+reports `route_classifier` with an explicit "placeholder for mmBERT-small head" label.
+**Status:** Accepted. **Consequences:** Demo decisions are believable and honest about
+their provenance; swapping in the trained head changes the complexity axis only and
+touches neither the endpoint surface nor the hook/skill.
