@@ -1,0 +1,6 @@
+{"turn": 1, "decision": "local", "tier": "edge", "reason": "complexity_gate", "shed": false, "query": "Namaste \u2014 kaam shuru karein?"}
+{"turn": 2, "decision": "local", "tier": "edge", "reason": "complexity_gate", "shed": false, "query": "I need to log today's wheat field inspection."}
+{"turn": 3, "decision": "local", "tier": "edge", "reason": "complexity_gate", "shed": false, "query": "What's the recommended urea dose for wheat at tillering?"}
+{"turn": 4, "decision": "local", "tier": "edge", "reason": "complexity_gate", "shed": false, "query": "Summarize my last three field notes in one line."}
+{"turn": 5, "decision": "escalate", "tier": "cloud", "reason": "complexity_gate", "shed": false, "query": "Design a 3-day irrigation and fertilizer schedule across my five plots, step by step, accounting for the rainfall forecast and each crop's growth stage."}
+{"turn": 6, "decision": "local", "tier": "edge", "reason": "complexity_gate", "shed": false, "query": "Haan, theek hai \u2014 save kar do."}
