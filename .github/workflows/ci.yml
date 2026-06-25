@@ -142,6 +142,51 @@ jobs:
       - name: Run remote backend
         run: python -m fabric.remote_backend
 
+  # Gate 10: OpenAI-compatible serve endpoint (serve.openai_endpoint)
+  # Covers: single-flight NPU lock, overflow-shed, tool_calls schema, tools->no-CoT
+  serve-endpoint:
+    name: "Gate 10: Serve Endpoint"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install -q fastapi httpx
+      - name: Endpoint contract (schema + stream + tool_calls)
+        run: python tests/test_endpoint_contract.py
+      - name: NPU single-flight + overflow shed
+        run: python tests/test_npu_single_flight.py
+      - name: Tools force thinking off on local lane
+        run: python tests/test_tools_thinking_off.py
+
+  # Gate 11: Router contention axis (router.router_policy)
+  # Covers: contention_shed when NPU busy, never-shed offline (stdlib only)
+  router-contention:
+    name: "Gate 11: Router Contention"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run router contention
+        run: python tests/test_router_contention.py
+
+  # Gate 12: Hermes provider plugin (integrations/hermes)
+  # Covers: ProviderProfile factory keys/values, aux-lane pin, base_url env
+  hermes-provider:
+    name: "Gate 12: Hermes Provider"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run hermes provider
+        run: python tests/test_hermes_provider.py
+
   # Full demo integration test (runs last, validates the whole spine)
   demo-integration:
     name: "Demo: Full Spine"
@@ -167,7 +212,7 @@ jobs:
   all-gates:
     name: "✅ All Gates Pass"
     runs-on: ubuntu-latest
-    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend, demo-integration]
+    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend, serve-endpoint, router-contention, hermes-provider, demo-integration]
     if: always()
     steps:
       - name: Check all gates
@@ -181,8 +226,11 @@ jobs:
              [[ "${{ needs.executor-smoke.result }}" != "success" ]] ||
              [[ "${{ needs.genie-backend.result }}" != "success" ]] ||
              [[ "${{ needs.remote-backend.result }}" != "success" ]] ||
+             [[ "${{ needs.serve-endpoint.result }}" != "success" ]] ||
+             [[ "${{ needs.router-contention.result }}" != "success" ]] ||
+             [[ "${{ needs.hermes-provider.result }}" != "success" ]] ||
              [[ "${{ needs.demo-integration.result }}" != "success" ]]; then
             echo "::error::One or more gates failed"
             exit 1
           fi
-          echo "All 9 gates + demo integration passed"
+          echo "All 12 gates + demo integration passed"

@@ -98,3 +98,60 @@ QAIRT is a login-gated Qualcomm SDK with no anonymous URL. **Decision:**
 accepting a `-QairtZip` fallback; it never fabricates a download URL. **Status:**
 Accepted. **Consequences:** Repeatable one-command setup; honest failure with exact
 next steps when the runtime genuinely isn't present.
+
+## ADR-0013 — HARP exposed via an OpenAI-compatible endpoint + Hermes provider plugin
+**Context:** Third-party agent frameworks (Hermes, OpenClaw) need to use HARP's
+hardware-aware routing without adopting HARP's internals. The two losing options are
+a fork (un-maintainable) or a generic MITM proxy (HARP would sit between the agent
+and some *other* model, owning neither). **Decision:** Ship `serve/openai_endpoint.py`
+— HARP *is* the origin model server, OpenAI-compatible (`/v1/chat/completions`,
+`/v1/models`, `/health`) — plus a drop-in Hermes `model-provider` plugin
+(`integrations/hermes/...`) that points the agent at it. The endpoint imports only
+the frozen `Backend` interface (concrete backends are constructor args).
+**Status:** Accepted. **Consequences:** Any OpenAI-speaking agent gets the NPU lane
+for free; no fork, no proxy. Standard `chat.completion(.chunk)` + `tool_calls` on the
+wire; no framework-proprietary events preserved. `harp_contract.py` untouched.
+
+## ADR-0014 — NPU single-flight lock + O(N) overflow-shed to escalate
+**Context:** The NPU single-context binary is **single-lane**. Two concurrent infers
+against one context binary exhaust the FastRPC memory map (`fastrpc memory map for
+fd ... failed with error: 0x1`), fail the SMMU domain, hit "Could not allocate
+persistent weights buffer!", and crash — or silently collide in VTCM (identical
+output for distinct prompts). Under queue, TTFT degrades O(N):
+`TTFT_k ≈ TTFT_base + Σ T_exec(i<k)`. **Decision:** The endpoint guards all local
+infers with one `asyncio.Lock` (exactly one in-flight). When the lane is busy and
+projected wait exceeds `HARP_TTFT_BUDGET_S` (2.0s) **and** escalate is available, it
+**sheds** the request to the cloud lane instead of queuing. Offline (no escalate) it
+queues on the NPU — correctness > latency, never drop. **Status:** Accepted.
+**Consequences:** No FastRPC 0x1 / VTCM-collision crash is reachable from the endpoint;
+foreground TTFT stays bounded; offline never loses a request.
+
+## ADR-0015 — Thinking disabled on the local lane when tools are present
+**Context:** GenieAPIService emits real OpenAI `tool_calls`, but Qwen3 chain-of-thought
+corrupts the Genie tool-interception path when a request carries `tools`. **Decision:**
+When a request carries `tools` and the chosen lane is local, the endpoint forces
+`thinking=False` on the local infer (threaded into `GenieBackend.infer`, defaulting on).
+**Status:** Accepted. **Consequences:** Tool-calling on-device returns well-formed
+`tool_calls`; CoT remains available for non-tool local turns. `InferRequest` is frozen,
+so thinking/tools ride as optional kwargs on the concrete local backend, not as new
+contract fields (see tension note in the PR).
+
+## ADR-0016 — Contention axis added to the router; complexity + hardware gates unchanged
+**Context:** The complexity gate (isotonic + conformal) and the base-class hardware
+guard decide *can the edge run this well*; neither sees lane **contention**.
+**Decision:** Extend `RoutingFeatures` with `npu_inflight`, `npu_queue_depth`,
+`tools_present`, `offline`. A CONTENTION gate runs **after** the complexity gate: if
+complexity says LOCAL but projected NPU wait exceeds the budget and escalate is
+available, flip to ESCALATE with `reason="contention_shed"`. It never fires offline and
+never overrides the existing gates — it only flips an already-LOCAL soft verdict. The
+isotonic+conformal gate and the hardware guard stay authoritative. **Status:** Accepted.
+**Consequences:** The router models lane pressure as a first-class axis; the synthetic
+corpus emits the four new keys so training data matches the live feature contract.
+
+## ADR-0017 — `default_aux_model` pins the Hermes aux lane to the NPU
+**Context:** Hermes runs an aux lane for background work (summarization, title-gen,
+memory compaction) — latency-tolerant and constant. **Decision:** The provider's
+`default_aux_model="harp-edge"` pins that lane to the NPU. **Status:** Accepted.
+**Consequences:** Background work stays on-device (private, free, no round-trip) and is
+the single-stream NPU sweet spot; single-flight + overflow-shed keep it from contending
+with the foreground lane, which stays `harp-auto` and free to escalate.
