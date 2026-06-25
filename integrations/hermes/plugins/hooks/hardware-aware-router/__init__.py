@@ -23,16 +23,17 @@ from __future__ import annotations
 
 import os
 
-import httpx
-
 DEFAULT_BASE_URL = "http://127.0.0.1:8765/v1"
 _VALID_API_MODES = {"chat_completions", "anthropic_messages",
                     "codex_responses", "bedrock_converse"}
 
 
 def _post_route(url: str, payload: dict, timeout_s: float) -> dict:
-    """Single seam for the HTTP call — tests monkeypatch this. Raises on any
-    transport/HTTP error so decide_override's except-all can fail safe."""
+    """Single seam for the HTTP call — tests monkeypatch this. httpx is imported
+    LAZILY: it is an optional HARP dependency, so a Hermes runtime without it must
+    degrade to a router-unavailable error (caught by decide_override -> None), NOT
+    crash at module import. Raises on any transport/HTTP/import error."""
+    import httpx
     resp = httpx.post(url, json=payload, timeout=timeout_s)
     resp.raise_for_status()
     return resp.json()
@@ -75,9 +76,13 @@ def decide_override(
 
 def _telemetry_line(override: dict) -> str:
     """One ephemeral line so the routing decision is visible in the transcript.
-    Appended as `context`; never mutates history or the system prompt."""
-    return (f"[HARP] this turn routed on-device → {override.get('provider')}/"
-            f"{override.get('model')} (NPU lane, privacy-preserving, offline-capable)")
+    Appended as `context`; never mutates history or the system prompt. provider/
+    model cross a network boundary, so newlines are stripped — the docstring
+    promises ONE line and we keep it one line regardless of the response."""
+    provider = str(override.get("provider")).replace("\n", " ")
+    model = str(override.get("model")).replace("\n", " ")
+    return (f"[HARP] this turn routed on-device → {provider}/{model} "
+            f"(NPU lane, privacy-preserving, offline-capable)")
 
 
 def _hook(*, session_id: str = "", user_message: str = "",
