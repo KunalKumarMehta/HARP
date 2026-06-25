@@ -154,30 +154,44 @@ class GenieBackend(Backend):
 
     # ---- Qwen3 chat template (matches the bundle's sample_prompt.txt) --------
     @staticmethod
-    def _templated_prompt(messages: list[dict]) -> str:
+    def _templated_prompt(messages: list[dict], thinking: bool = True,
+                          tools: list | None = None) -> str:
         sys_txt = next((m["content"] for m in messages if m.get("role") == "system"), None)
         parts: list[str] = []
         if sys_txt is None:
             sys_txt = "You are a helpful AI assistant"
+        # Qwen3 tool-calling: tools live in the system turn; the model emits
+        # <tool_call>{...}</tool_call>. We template them verbatim so genie-t2t-run
+        # sees the same shape GenieAPIService would. ponytail: device-time Genie may
+        # template tools itself; this keeps the off-device path faithful.
+        if tools:
+            sys_txt = f"{sys_txt}\n\n# Tools\n{json.dumps(tools, separators=(',', ':'))}"
         parts.append(f"<|im_start|>system\n{sys_txt}<|im_end|>")
         for m in messages:
             role = m.get("role")
             if role in ("user", "assistant"):
                 parts.append(f"<|im_start|>{role}\n{m['content']}<|im_end|>")
-        parts.append("<|im_start|>assistant\n")
+        # Qwen3 disables chain-of-thought when the assistant turn opens with /no_think.
+        # The endpoint forces this whenever a request carries tools (Genie tool path).
+        parts.append("<|im_start|>assistant\n" + ("" if thinking else "/no_think\n"))
         return "\n".join(parts)
 
     # ---- the blocking generate loop (subprocess, streamed) ------------------
-    def _generate_blocking(self, req: InferRequest, on_token, on_first, state=None) -> None:
+    def _generate_blocking(self, req: InferRequest, on_token, on_first, state=None,
+                           *, thinking: bool = True, tools: list | None = None) -> None:
         """state (optional): {"proc": Popen|None, "cancel": threading.Event}. When
         present, the live Popen is published to it so infer() can terminate the
-        child if the async consumer stops early."""
+        child if the async consumer stops early.
+
+        thinking=False forces Qwen3 CoT off (the endpoint sets this when a request
+        carries tools). tools are templated into the system turn so the model can
+        emit <tool_call> blocks."""
         spec = self._spec(req.model_id)
-        prompt = self._templated_prompt(req.messages)
+        prompt = self._templated_prompt(req.messages, thinking=thinking, tools=tools)
         genie = self._genie_path()
 
         if genie is None:
-            self._fallback_blocking(req, prompt, on_token, on_first, state)
+            self._fallback_blocking(req, prompt, on_token, on_first, state, tools=tools)
             return
 
         bundle = Path(spec.bundle_dir).resolve()
@@ -264,10 +278,16 @@ class GenieBackend(Backend):
 
     # ---- off-device deterministic stub (CI / no QAIRT) ----------------------
     def _fallback_blocking(self, req: InferRequest, prompt: str, on_token, on_first,
-                           state=None) -> None:
+                           state=None, *, tools: list | None = None) -> None:
         msg = (f"[genie-stub:{req.model_id}] genie-t2t-run not on PATH; this is a "
                f"contract-conformant placeholder, not NPU output. Templated prompt "
                f"chars={len(prompt)}.")
+        if tools:
+            # Emit a real Qwen3/Hermes-shaped tool call so the OpenAI tool_calls
+            # wiring is exercised off-device. Picks the first declared tool; not
+            # NPU output, just a contract-conformant placeholder.
+            fn = ((tools[0] or {}).get("function") or {}).get("name", "unknown_tool")
+            msg = f'<tool_call>{{"name": "{fn}", "arguments": {{}}}}</tool_call>'
         first = True
         for w in msg.split():
             if state is not None and state["cancel"].is_set():
@@ -279,7 +299,10 @@ class GenieBackend(Backend):
             on_token(w + " ")
 
     # ---- async streaming bridge (worker thread -> asyncio.Queue) ------------
-    async def infer(self, req: InferRequest):
+    async def infer(self, req: InferRequest, *, thinking: bool = True,
+                    tools: list | None = None):
+        """thinking defaults ON; the OpenAI endpoint passes thinking=False whenever
+        a request carries tools (Genie tool-interception requires CoT off)."""
         loop = asyncio.get_running_loop()
         q: asyncio.Queue[str | None] = asyncio.Queue()
         err: dict[str, BaseException] = {}
@@ -290,7 +313,8 @@ class GenieBackend(Backend):
 
         def worker() -> None:
             try:
-                self._generate_blocking(req, emit, lambda: None, state)
+                self._generate_blocking(req, emit, lambda: None, state,
+                                        thinking=thinking, tools=tools)
             except BaseException as e:               # surface, don't hang the await
                 err["e"] = e
             finally:

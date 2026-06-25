@@ -154,6 +154,15 @@ class Record:
     cloud_correct: bool | None
     reward_margin: float | None
     weight: float = 1.0
+    # --- contention axis features (mirror router_policy.RoutingFeatures) ---
+    # Emitted so the corpus schema matches the live feature contract. Sampled
+    # independently of difficulty; they do NOT change the complexity label — the
+    # contention shed is an inference-time gate over a LOCAL verdict, not a
+    # supervised target. Keys are stable for the trainer's feature extractor.
+    npu_inflight: bool = False
+    npu_queue_depth: int = 0
+    tools_present: bool = False
+    offline: bool = False
 
 
 # ---------------------------------------------------------------- generator
@@ -174,6 +183,8 @@ def generate(
         e_ok, e_rew = edge_solve(t.difficulty, rng)
         c_ok, c_rew = cloud_solve(t.difficulty, rng)
         label, label_str = _label(t.task_type, e_ok, c_ok, e_rew, c_rew, epsilon)
+        inflight = rng.random() < 0.25                    # lane busy ~1/4 of the time
+        depth = rng.randint(1, 4) if inflight and rng.random() < 0.5 else (1 if inflight else 0)
         recs.append(Record(
             id=f"r{i:06d}",
             text=text,
@@ -183,6 +194,10 @@ def generate(
             edge_correct=e_ok if t.task_type == "verifiable" else None,
             cloud_correct=c_ok if t.task_type == "verifiable" else None,
             reward_margin=round(c_rew - e_rew, 4) if t.task_type == "open" else None,
+            npu_inflight=inflight,
+            npu_queue_depth=depth,
+            tools_present=rng.random() < 0.2,
+            offline=rng.random() < 0.1,
         ))
     _apply_class_weights(recs)
     return recs
