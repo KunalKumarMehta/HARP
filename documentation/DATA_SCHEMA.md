@@ -114,3 +114,38 @@ Cloud uplink frames for the outbox drain:
 `{mutation_id, entity_id, op, payload, revision}` → ACK `{mutation_id, status}`
 where `status ∈ SyncState`. The cloud dedups on `mutation_id` before any
 side-effect (at-least-once → effectively-once).
+
+---
+
+## 5. Routing feature contract (`router/router_policy.py` · `RoutingFeatures`)
+
+The gatekeeper's input contract. The synthetic-data generator
+(`data/synth_routing_data.py`) emits **exactly** these keys per row so training
+data matches the live features. Query + device fields are pre-existing; the four
+**contention** keys were added with the NPU single-flight endpoint and default so
+every existing caller is unchanged.
+
+| Key | Type | Source | Notes |
+|---|---|---|---|
+| `query` | str | hot path | the turn text scored by the encoder head |
+| `modality` | `Modality` | plan step | text \| audio \| vision |
+| `online` | bool | network | false ⇒ escalate physically unavailable |
+| `npu_present` | bool | `Capability` | no NPU ⇒ capability fallback to cloud |
+| `edge_modalities` | tuple | `Capability` | modality coverage guard |
+| `edge_max_context` | int | `Capability` | over-context ⇒ escalate |
+| `approx_tokens` | int | cheap estimate | pre-tokenizer length proxy |
+| `thermal_c` | float? | sensor | ≥ ceiling ⇒ bias escalate |
+| `battery_pct` | float? | sensor | ≤ floor (not charging) ⇒ bias escalate |
+| **`npu_inflight`** | bool | endpoint | an NPU infer is currently running |
+| **`npu_queue_depth`** | int | endpoint | infers already committed to the NPU lane |
+| **`tools_present`** | bool | request | request carries tools (local lane forces CoT off) |
+| **`offline`** | bool | endpoint | escalate unavailable ⇒ contention gate **never** sheds |
+
+**Contention gate:** projected NPU wait `= (npu_queue_depth + npu_inflight) ·
+npu_exec_est_s`. If a soft-LOCAL verdict's projected wait exceeds
+`contention_budget_s` (2.0s) and not offline, flip to ESCALATE
+(`reason="contention_shed"`). It runs **after** the isotonic+conformal complexity
+gate and never overrides it or the hardware guard. The four contention keys are
+sampled independently of difficulty in the corpus — they are an inference-time
+gate over a LOCAL verdict, **not** a supervised label — so existing labels/weights
+are unchanged.

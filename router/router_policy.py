@@ -69,6 +69,15 @@ class RoutingFeatures:
     approx_tokens: int                 # cheap len-based estimate, pre-tokenizer
     thermal_c: float | None = None     # edge thermal; high -> bias to escalate
     battery_pct: float | None = None   # low + not charging -> bias to escalate
+    # --- contention axis (NPU single-lane pressure; populated by the endpoint) ---
+    # The NPU single-context binary is single-lane: one in-flight infer at a time.
+    # Under queue, TTFT degrades O(N). These four let the gate shed a LOCAL verdict
+    # to the cloud when the lane is busy AND escalate is available. Defaulted so
+    # every existing caller (and the contract's PolicyRouter) is unchanged.
+    npu_inflight: bool = False         # an NPU infer is currently running
+    npu_queue_depth: int = 0           # infers already committed to the NPU lane
+    tools_present: bool = False        # request carries tools (thinking forced off)
+    offline: bool = False              # escalate physically unavailable -> never shed
 
 
 # ---------------------------------------------------------------- isotonic calibration (PAV, dependency-free)
@@ -195,12 +204,19 @@ class RoutingPolicy:
         gate: ConformalGate | None = None,
         thermal_ceiling_c: float = 80.0,
         battery_floor_pct: float = 15.0,
+        contention_budget_s: float = 2.0,
+        npu_exec_est_s: float = 3.0,
     ) -> None:
         self.score_fn = score_fn
         self.calibrator = calibrator or IsotonicCalibrator()
         self.gate = gate or ConformalGate()
         self.thermal_ceiling_c = thermal_ceiling_c
         self.battery_floor_pct = battery_floor_pct
+        # Contention gate: projected NPU wait = depth * per-infer estimate. One
+        # in-flight infer (depth>=1) already exceeds the default 2.0s TTFT budget,
+        # so a busy lane sheds rather than queues (O(N) TTFT degradation).
+        self.contention_budget_s = contention_budget_s
+        self.npu_exec_est_s = npu_exec_est_s
 
     def calibrate(self, u: Sequence[float], err: Sequence[int]) -> "RoutingPolicy":
         self.calibrator.fit(u, err)
@@ -247,7 +263,8 @@ class RoutingPolicy:
 
         # --- heuristic floor: trivial turn, never invoke the head
         if _TRIVIAL.match(f.query):
-            v = self._verdict(RouteDecision.LOCAL, "trivial_floor", t0, u=0.0, p_err=0.0)
+            v = self._shed_if_contended(
+                self._verdict(RouteDecision.LOCAL, "trivial_floor", t0, u=0.0, p_err=0.0), f, t0)
             trace_decide(step_id, plan_id, decision_in, v)
             return v
 
@@ -259,9 +276,30 @@ class RoutingPolicy:
                              u=u, p_err=p_err)
             trace_decide(step_id, plan_id, decision_in, v)
             return v
-        v = self._verdict(RouteDecision.LOCAL, "complexity_gate", t0,
-                         u=u, p_err=p_err)
+        # complexity says LOCAL — runs AFTER the calibrated gate, never before.
+        v = self._shed_if_contended(
+            self._verdict(RouteDecision.LOCAL, "complexity_gate", t0, u=u, p_err=p_err), f, t0)
         trace_decide(step_id, plan_id, decision_in, v)
+        return v
+
+    # --- contention axis: shed a soft-LOCAL verdict to cloud when the NPU lane is
+    # busy and the projected wait exceeds the budget. NEVER fires offline (escalate
+    # is physically gone) and never overrides the complexity/hardware gates — it
+    # only flips an already-LOCAL outcome. The base-class hardware guard still runs
+    # downstream and has final say.
+    def _projected_npu_wait_s(self, f: RoutingFeatures) -> float:
+        ahead = f.npu_queue_depth + (1 if f.npu_inflight else 0)
+        return ahead * self.npu_exec_est_s
+
+    def _shed_if_contended(self, v: RoutingVerdict, f: RoutingFeatures,
+                           t0: float) -> RoutingVerdict:
+        if v.decision != RouteDecision.LOCAL:
+            return v
+        if f.offline or not f.online:           # escalate unavailable -> correctness > latency
+            return v
+        if self._projected_npu_wait_s(f) > self.contention_budget_s:
+            return self._verdict(RouteDecision.ESCALATE, "contention_shed", t0,
+                                 u=v.u, p_err=v.p_err)
         return v
 
     def _verdict(self, d: RouteDecision, reason: str, t0: float,
