@@ -27,3 +27,6 @@ build/
 # Generated benchmark evidence
 evidence_pack*.md
 evidence_pack*.json
+
+# local validation venv (hermes branch)
+.venv-hermes/
