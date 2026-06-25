@@ -23,6 +23,11 @@ def test_demo_runs_and_splits() -> None:
         decisions = [r["decision"] for r in records]
         assert decisions.count("local") >= 1, decisions
         assert decisions.count("escalate") >= 1, decisions
+        # the reason column must demonstrate more than one routing axis (e.g.
+        # complexity_gate AND contention_shed) — not the same string every row.
+        reasons = {r["reason"] for r in records}
+        assert len(reasons) >= 2, f"demo should surface multiple axes, got {reasons}"
+        assert "contention_shed" in reasons, reasons
 
         lines = [json.loads(x) for x in open(trace) if x.strip()]
         assert len(lines) == 6

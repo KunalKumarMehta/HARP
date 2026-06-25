@@ -46,16 +46,23 @@ class _StubCloud(Backend):
 
 
 # A field worker (vernacular code-switch) logging a wheat inspection on a handset.
-# 5 turns belong on-device; ONE hard multi-step planning turn escalates to cloud.
-TURNS: list[str] = [
-    "Namaste — kaam shuru karein?",                                       # greet
-    "I need to log today's wheat field inspection.",                      # intent parse
-    "What's the recommended urea dose for wheat at tillering?",           # retrieval
-    "Summarize my last three field notes in one line.",                   # on-device step
-    ("Design a 3-day irrigation and fertilizer schedule across my five plots, "
-     "step by step, accounting for the rainfall forecast and each crop's growth "
-     "stage."),                                                            # HARD -> escalate
-    "Haan, theek hai — save kar do.",                                     # confirm
+# The decisions are the REAL router's. Two DISTINCT escalate axes are demonstrated:
+#   - a quick lookup that arrives while the NPU is busy -> contention_shed (cloud)
+#   - a hard multi-step planning turn -> complexity_gate (cloud)
+# Everything else stays on-device. A turn may carry lane hints (npu_inflight /
+# npu_queue_depth) so the single-lane contention story is visible off-device.
+TURNS: list[dict] = [
+    {"text": "Namaste — kaam shuru karein?"},                             # greet -> local
+    {"text": "I need to log today's wheat field inspection."},            # intent -> local
+    {"text": "Summarize my last three field notes in one line."},         # on-device -> local
+    # A quick price check fires WHILE the NPU is still summarizing (lane busy):
+    # HARP sheds it to cloud rather than make the worker wait behind the queue.
+    {"text": "Quick — today's mandi rate for wheat?",
+     "npu_inflight": True, "npu_queue_depth": 1},                          # contention -> cloud
+    {"text": ("Design a 3-day irrigation and fertilizer schedule across my five "
+              "plots, step by step, accounting for the rainfall forecast and each "
+              "crop's growth stage.")},                                    # HARD -> cloud
+    {"text": "Haan, theek hai — save kar do."},                          # confirm -> local
 ]
 
 _LABEL = {"local": "LOCAL / NPU", "escalate": "ESCALATE / Nemotron"}
@@ -72,9 +79,14 @@ def run(trace_path: Path | None = None) -> list[dict]:
     trace JSONL. Pure of console output so tests can call it directly."""
     client = _client()
     records: list[dict] = []
-    for i, query in enumerate(TURNS, start=1):
-        r = client.post("/v1/route", json={
-            "messages": [{"role": "user", "content": query}]}).json()
+    for i, turn in enumerate(TURNS, start=1):
+        query = turn["text"]
+        body: dict = {"messages": [{"role": "user", "content": query}]}
+        if "npu_inflight" in turn:
+            body["npu_inflight"] = turn["npu_inflight"]
+        if "npu_queue_depth" in turn:
+            body["npu_queue_depth"] = turn["npu_queue_depth"]
+        r = client.post("/v1/route", json=body).json()
         records.append({
             "turn": i,
             "query": query,
