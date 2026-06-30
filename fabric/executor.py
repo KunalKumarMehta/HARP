@@ -30,7 +30,7 @@ import time
 from dataclasses import dataclass, field
 
 from shared.harp_contract import (
-    InferRequest, PlanGraph, PlanStep, Router, Tier,
+    InferRequest, PlanGraph, PlanStep, Router,
 )
 
 # Optional tracing (no-op if HARP_TRACE not set). `_trace()` is True only when the

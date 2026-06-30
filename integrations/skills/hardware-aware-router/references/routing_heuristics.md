@@ -33,8 +33,8 @@ and `serve/openai_endpoint.py::_resolve_route` (pins + contention shed).
 
 5. **Tools.** A turn carrying `tools` is biased to the cloud planner, which handles
    function-calling natively. (On the local lane HARP forces chain-of-thought off
-   for tool turns; for the Track-A demo, tool turns simply escalate and the primary
-   model answers — the hook returns `None`.)
+   for tool turns; tool turns simply escalate and the primary model answers — the
+   hook returns `None`.)
 
 ## Reasons you will see on /route
 

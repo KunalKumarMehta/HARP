@@ -1,5 +1,5 @@
 """
-HARP — Hardware-Aware Routing Platform
+HARP — hardware-aware edge↔cloud routing
 cloud/plan_emitter.py  ·  MIT
 
 Cloud planner -> edge executor bridge. Converts the NAT ReWOO Planner Node's

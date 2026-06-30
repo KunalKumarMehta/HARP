@@ -1,17 +1,16 @@
 """
-HARP — Hardware-Aware Routing Platform
+HARP — hardware-aware edge↔cloud routing
 cloud/bench_evidence.py  ·  MIT
 
-The NVIDIA scoring metric, operationalized. This harness drives the contract's
-profile() against two configs (baseline vs optimized), computes the GenAI-Perf
-metric family, and prints an evidence table with lines that map metrics to
-business value.
+A cloud-planner benchmark harness. It drives the contract's profile() against two
+configs (baseline vs optimized), computes the GenAI-Perf metric family, and prints
+an evidence table with lines that map metrics to cost/latency value.
 
 Metric definitions:
   - TTFT = first CONTENT token; ITL = (e2e - TTFT)/(out_tokens - 1)
   - "goodput" = throughput under a fixed latency SLA (TTFT ceiling) — the metric
     that matters under a latency SLA
-  - Key angles: roofline (memory- vs compute-bound), TCO (3x TPS at same SLA = 1/3 the GPUs)
+  - Key angles: roofline (memory- vs compute-bound), cost (Nx goodput at the same SLA ~= 1/N the GPUs)
   - Real sweep is `genai-perf analyze --sweep-type concurrency` on the deployed
     TRT-LLM engine in Triton; this harness is the in-process pre-flight + the
     table generator. Final numbers come from GenAI-Perf on the GPU box.
@@ -92,7 +91,7 @@ def render_pack(base: BenchResult, opt: BenchResult, baseline_engine: str = "vLL
     tps_note = _flag(tps_x, TRTLLM_TPS_BAND) if baseline_engine == "vLLM" else "baseline=HF/PyTorch (large multiplier expected)"
     ttft_note = _flag(ttft_x, TRTLLM_TTFT_BAND) if baseline_engine == "vLLM" else ""
     lines = [
-        "================ NVIDIA EVIDENCE PACK (cloud planner workload) ================",
+        "================ BENCHMARK EVIDENCE PACK (cloud planner workload) ================",
         f"baseline engine: {baseline_engine}   optimized engine: TensorRT-LLM / Triton",
         f"{'metric':<22}{'baseline':>14}{'optimized':>14}{'delta':>12}",
         "-" * 62,
@@ -101,12 +100,11 @@ def render_pack(base: BenchResult, opt: BenchResult, baseline_engine: str = "vLL
         f"{'throughput (tok/s)':<22}{base.tok_s_mean:>14.1f}{opt.tok_s_mean:>14.1f}{tps_x:>11.2f}x  ({tps_note})",
         f"{'goodput @SLA<%dms' % TTFT_SLA_MS:<22}{base.sla_pass_rate:>13.0%}{opt.sla_pass_rate:>14.0%}",
         "-" * 62,
-        "EVIDENCE FRAMING (cite measured values; ban aspirational TFLOPS):",
-        f"  • TTFT: {ttft_x:.2f}x ({ttft_note}). State baseline explicitly: vs {baseline_engine}.",
+        "NOTES (cite measured values; avoid peak-TFLOPS claims):",
+        f"  • TTFT: {ttft_x:.2f}x ({ttft_note}). State the baseline explicitly: vs {baseline_engine}.",
         f"  • Throughput: {tps_x:.2f}x at fixed TTFT SLA = goodput, not raw TPS.",
-        f"  • TCO: {tps_x:.2f}x goodput => ~{gpu_fraction:.2f} of the fleet for equal users.",
-        "    (The order-of-magnitude win is HF->vLLM ~75% fleet cut; TRT-LLM is the",
-        "     +15-30% efficiency-extraction layer on top — frame it as exactly that.)",
+        f"  • Cost: {tps_x:.2f}x goodput => ~{gpu_fraction:.2f} of the GPUs for equal users.",
+        "    (Most of the win is HF->vLLM (~75% fewer GPUs); TRT-LLM adds ~15-30% on top.)",
         "  • Roofline: show decode moving toward peak HBM BW via Paged KV + in-flight",
         "    batching (Nsight Compute). Ban peak-TFLOPS claims; decode is BW-bound.",
         "  • Safety, no latency tax: NeMo Guardrails stream_first=True, parallel rails.",

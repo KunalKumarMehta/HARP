@@ -12,8 +12,9 @@ venv/
 # Local tooling / agent config
 .claude/
 
-# Working notes & decks kept out of the public repo
-docs/
+# Research, working notes, decks, role playbooks — kept out of the public repo.
+# docs/ itself is tracked (engineering docs); only the archive is ignored.
+docs/archive/
 
 # Build artifacts & large binaries
 build/

@@ -1,5 +1,5 @@
 """
-HARP — Hardware-Aware Routing Platform
+HARP — hardware-aware edge↔cloud routing
 cloud/emit_first_plan.py  ·  MIT
 
 FIRST REAL PLAN-GRAPH EMISSION. Drives the MANAGER (planner) NIM directly

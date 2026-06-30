@@ -1,5 +1,5 @@
 """
-HARP — Hardware-Aware Routing Platform
+HARP — hardware-aware edge↔cloud routing
 cloud/dag_extractor_middleware.py  ·  MIT  ·  NAT v1.7.0
 
 Pre-execution DAG interception + suppression, built against the verified

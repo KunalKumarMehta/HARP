@@ -1,5 +1,5 @@
 """
-HARP — Hardware-Aware Routing Platform
+HARP — hardware-aware edge↔cloud routing
 fabric/ws_node.py  ·  Multi-device transport node  ·  MIT
 
 The laptop's dual-role fabric node (DP3 / ARM64 Fabric doc):

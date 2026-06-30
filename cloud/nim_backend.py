@@ -1,5 +1,5 @@
 """
-HARP — Hardware-Aware Routing Platform
+HARP — hardware-aware edge↔cloud routing
 cloud/nim_backend.py  ·  MIT
 
 Cloud half of the one-call swap. Implements shared/harp_contract.Backend over
@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import AsyncIterator
 
 import httpx
@@ -122,7 +122,7 @@ class NIMBackend(Backend):
                 if content:
                     yield content
 
-    # ---- contract 3: profiling (the NVIDIA-scoring metric) ---------------
+    # ---- contract 3: profiling (TTFT / tok-s) ---------------
     async def profile(self, req: InferRequest) -> Metrics:
         """TTFT = wall-clock to first token of EITHER stream (generation truly
         began). tok/s counts ANSWER (content) tokens over the answer window —

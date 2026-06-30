@@ -1,5 +1,5 @@
 """
-HARP — Hardware-Aware Routing Platform
+HARP — hardware-aware edge↔cloud routing
 fabric/sync_queue.py  ·  Offline mutation queue (four-state FSM)  ·  MIT
 
 The offline-resilience backbone. Pure stdlib (sqlite3 only) so it builds native

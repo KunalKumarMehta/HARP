@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "harp-runtime"
 version = "0.1.0"
-description = "Hardware-Aware Routing Platform — a hardware-agnostic agentic runtime that routes each task to the right model on the right tier (on-device NPU vs. cloud planner) with graceful offline fallback."
+description = "A hardware-aware agentic assistant that runs on-device and escalates to the cloud only when a task needs it — its engine is a calibrated edge<->cloud gate that works offline."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

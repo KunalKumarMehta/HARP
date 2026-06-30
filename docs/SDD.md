@@ -1,6 +1,6 @@
 # HARP — Software Design Document (SDD / TDD)
 
-**Status:** living · **Owner:** Maintainers · **Last updated:** 2026-06-17
+**Status:** living · **Owner:** Maintainers · **Last updated:** 2026-07-01
 Pairs with [PRD.md](PRD.md), [ADR.md](ADR.md), [DATA_SCHEMA.md](DATA_SCHEMA.md).
 
 ## 1. Architecture overview
@@ -29,7 +29,6 @@ everything depends on it. CI gate 1 + conformance (gate 2) protect it.
 | `shared/harp_contract.py` | the freeze | `Backend`, `Router`, `PlanGraph/PlanStep`, `Capability`, `InferRequest`, `Metrics`, enums `Tier/Modality/RouteDecision/SyncState` |
 | `shared/plan_codec.py` | cloud↔edge serialization | `to_json/from_json`, two-layer validation, `PlanWireError` |
 | `shared/conformance.py` | runtime ABC enforcement | `assert_conforms()` |
-| `shared/mutation.py` | ULID idempotency key for cloud dedup | — |
 | `router/router_policy.py` | the routing IP | `PolicyRouter`, `RoutingPolicy`, `IsotonicCalibrator`, `ConformalGate` |
 | `fabric/executor.py` | end-to-end plan execution | `PlanExecutor`, `StepResult`, `ExecutionResult` |
 | `fabric/sync_queue.py` | offline four-state outbox | `OutboxQueue`, `Mutation` |
@@ -38,8 +37,11 @@ everything depends on it. CI gate 1 + conformance (gate 2) protect it.
 | `edge/genie_backend.py` | precompiled Genie bundle backend (fast path) | `GenieBackend`, `genie_qwen3_4b()`, `genie_swarm()` |
 | `edge/qnn_backend.py` | self-compiled onnxruntime-genai backend | `QNNBackend` |
 | `edge/bench*.py`, `power.py` | Risk-A gate + energy/latency evidence | `run_gate`, `ProfilableBackend` |
-| `cloud/*` | NIM backend, ReWOO emitter, NAT middleware, dedup | `NIMBackend`, `emit_plan_graph` |
+| `cloud/*` | NIM backend, ReWOO emitter, NAT middleware, dedup | `NIMBackend`, `emit_plan_graph`, `emit_first_plan` |
+| `serve/openai_endpoint.py` | OpenAI-compatible endpoint + advisory `/v1/route` | `make_app()`, `_resolve_route()`, NPU single-flight |
+| `integrations/hermes/*` | Hermes model-provider plugin + `pre_llm_call` routing hook | `build_harp_provider_profile()`, `decide_override()` |
 | `demo/run_demo.py` | the whole spine in one command | — |
+| `demo/track_a_routing_demo.py` | per-turn `/v1/route` demo + trace artifact | `run()` |
 
 ## 3. The contract (interfaces)
 
@@ -120,6 +122,12 @@ Every contract invariant is a runnable CI gate (`.github/workflows/ci.yml`).
 | 7 | `tests.executor_smoke` | FR4 dataflow threading, failure-skip, boundary-safety, cycle reject |
 | 8 | `edge.genie_backend` | FR5 Genie conformance + swarm discovery (off-device stub) |
 | 9 | `fabric.remote_backend` | FR7 multi-device over real socket + truncation-raises |
+| 10 | `tests.test_endpoint_contract` + `test_npu_single_flight` + `test_tools_thinking_off` | serve schema/stream/tool_calls, NPU single-flight + overflow-shed, tools→no-CoT |
+| 11 | `tests.test_router_contention` | contention shed when NPU busy; never-shed offline |
+| 12 | `tests.test_hermes_provider` | Hermes ProviderProfile factory keys/values, aux-lane pin |
+| 13 | `tests.test_route_endpoint` + `test_pre_llm_call_hook` | advisory `/v1/route`; hook fail-safe + `**kwargs` |
+| 14 | `tests.test_skill_packaging` | agentskills.io SKILL.md frontmatter, `hardware_probe` graceful |
+| 15 | `tests.test_track_a_demo` | 6-turn routing table + `trace.jsonl` local/escalate split |
 
 Backends that can't run off-device (Genie/QNN on NPU, NIM live) ship a conformant
 stub/mock so CI is green everywhere; the **gate honestly FAILS** off-device when it

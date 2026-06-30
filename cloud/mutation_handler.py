@@ -1,5 +1,5 @@
 """
-HARP — Hardware-Aware Routing Platform
+HARP — hardware-aware edge↔cloud routing
 cloud/mutation_handler.py  ·  MIT
 
 Design rule: the cloud mutation handler must dedup on mutation_id before any

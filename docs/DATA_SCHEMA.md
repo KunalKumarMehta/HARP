@@ -49,9 +49,10 @@ enqueue ─▶ pending ──next_in_flight──▶ in_flight ──ACK success
 - `mark_success`: delete the row (minimal footprint).
 - `mark_conflict`: quarantine; never silently overwrite, never infinite-retry.
 
-> Note: the cloud-side `CloudMutationHandler` dedup path uses a **ULID** key
-> (`shared/mutation.py`) for time-sortable idempotency; the outbox here uses
-> `uuid4`. Both are client-minted-once and stable across retransmits.
+> Note: the cloud-side `CloudMutationHandler` (`cloud/mutation_handler.py`) dedups
+> on the same client-minted `mutation_id` the outbox carries (`uuid4`), so a
+> redelivered mutation executes exactly once. The key is minted once and stable
+> across retransmits.
 
 ---
 

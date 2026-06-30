@@ -1,5 +1,5 @@
 """
-HARP — Hardware-Aware Routing Platform
+HARP — hardware-aware edge↔cloud routing
 shared/harp_contract.py  ·  MIT
 
 This module is the integration spine. The edge backend implements `Backend`

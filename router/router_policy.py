@@ -1,5 +1,5 @@
 """
-HARP — Hardware-Aware Routing Platform
+HARP — hardware-aware edge↔cloud routing
 router/router_policy.py  ·  MIT
 
 The learned routing brain. Fills the seam in the frozen contract:
@@ -39,8 +39,8 @@ from __future__ import annotations
 
 import re
 import time
-from dataclasses import dataclass, field
-from typing import Callable, Sequence, AsyncIterator
+from dataclasses import dataclass
+from typing import Callable, Sequence
 
 from shared.harp_contract import (
     Backend, Capability, Modality, PlanStep, RouteDecision, Router,

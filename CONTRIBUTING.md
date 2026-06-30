@@ -1,8 +1,8 @@
 # Contributing to HARP
 
-Thanks for your interest in HARP — a hardware-agnostic agentic runtime that routes
-each task to the right model on the right tier. Contributions of all kinds are
-welcome: bug reports, docs, tests, new backends, and routing improvements.
+Thanks for your interest in HARP — a hardware-aware agentic assistant whose engine
+is a calibrated edge↔cloud escalation gate that works offline. Contributions of all
+kinds are welcome: bug reports, docs, tests, new backends, and routing improvements.
 
 ## Ground rule: the contract is frozen
 
@@ -36,7 +36,8 @@ python -m demo.run_demo --distributed # run the edge tier on a separate fabric n
 
 ## Run the gates before you push
 
-CI gates the same invariants. Run them locally first — all must pass:
+These are the core contract gates (also `make check`); CI runs the full 15
+(`.github/workflows/ci.yml`). Run them locally first — all must pass:
 
 ```bash
 export PYTHONPATH="$PWD"

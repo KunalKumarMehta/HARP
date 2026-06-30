@@ -140,10 +140,6 @@ class AuthConfig:
         return None
 
 
-# Convenience: global default config loaded from env at import time
-DEFAULT_AUTH = AuthConfig.from_env()
-
-
 def create_self_signed_cert(cert_path: str, key_path: str, *, bits: int = 2048, days: int = 365) -> None:
     """Generate a self-signed certificate for development/testing.
     

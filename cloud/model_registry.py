@@ -1,5 +1,5 @@
 """
-HARP — Hardware-Aware Routing Platform
+HARP — hardware-aware edge↔cloud routing
 cloud/model_registry.py  ·  MIT
 
 Manager/Worker tier abstraction. Backend logic NEVER hardcodes a model string;

@@ -168,8 +168,6 @@ def render_evidence_pack(gate: GateResult, ab: dict | None = None,
 
 
 def write_artifacts(gate: GateResult, ab, swarm, md_path: str, json_path: str) -> None:
-    # with open(md_path, "w") as f:
-    #     f.write(render_evidence_pack(gate, ab, swarm))
     with open(md_path, "w", encoding="utf-8") as f:
         f.write(render_evidence_pack(gate, ab, swarm))
     blob = {
@@ -180,8 +178,6 @@ def write_artifacts(gate: GateResult, ab, swarm, md_path: str, json_path: str) -
                 "decode_speedup_x": ab["decode_speedup_x"]} if ab else None),
         "swarm": swarm,
     }
-    # with open(json_path, "w") as f:
-    #     json.dump(blob, f, indent=2, default=str)
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(blob, f, indent=2, default=str)
 

@@ -1,5 +1,5 @@
 """
-HARP — Hardware-Aware Routing Platform
+HARP — hardware-aware edge↔cloud routing
 shared/plan_codec.py  ·  PlanGraph wire codec  ·  MIT
 
 The single serialization boundary for the cloud->edge plan handoff. The cloud

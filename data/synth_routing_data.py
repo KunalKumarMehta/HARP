@@ -1,5 +1,5 @@
 """
-HARP — Hardware-Aware Routing Platform
+HARP — hardware-aware edge↔cloud routing
 data/synth_routing_data.py  ·  MIT
 
 Synthetic routing-decision corpus for the mmBERT-small ENCODER router.
@@ -134,8 +134,7 @@ def make_mock_solvers(edge_skill: float, cloud_skill: float, k: float = 9.0):
 def _label(task_type: str, e_ok: bool, c_ok: bool,
            e_rew: float, c_rew: float, epsilon: float) -> tuple[int, str]:
     if task_type == "verifiable":
-        escalate = (not e_ok) and True        # edge wrong -> escalate (both branches)
-        escalate = not e_ok
+        escalate = not e_ok                   # edge wrong -> escalate
     else:  # open-ended reward margin (rewards already on think-stripped output)
         escalate = (c_rew - e_rew) > epsilon
     return (1, "escalate") if escalate else (0, "local")

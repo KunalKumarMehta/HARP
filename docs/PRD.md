@@ -1,29 +1,35 @@
 # HARP — Product Requirements Document (PRD)
 
-**Status:** living · **Owner:** Maintainers · **Last updated:** 2026-06-17
+**Status:** living · **Owner:** Maintainers · **Last updated:** 2026-07-01
 
 ## 1. Problem
 
-Humans are messy communicators and devices are heterogeneous. Dumping raw prompts
-plus bloated device telemetry into one cloud LLM is expensive, slow, leaks
-privacy, and dies without a network. Pure on-device inference can't reason hard
-enough. Neither extreme wins.
+People want a capable AI assistant that works on the device in their hand —
+private, instant, and useful even with no signal. The two obvious options both
+fail them: routing every request to a cloud LLM is expensive, slow, leaks privacy,
+and dies without a network; pure on-device inference can't reason hard enough on
+its own. Neither extreme is something a person can rely on.
 
 ## 2. Product
 
-**HARP** is a hardware-aware agentic routing runtime: a lightweight edge
-gatekeeper de-noises input and triages device state, then routes each task to the
-right model on the right tier — a swarm of specialist small models on the
-Snapdragon NPU, escalating only the genuinely hard steps to a cloud multi-agent
+**HARP** is a hardware-aware agentic assistant: it runs on your device and
+escalates to the cloud only when a task genuinely needs it. A lightweight edge
+gatekeeper de-noises input and triages device state, runs what fits on the
+Snapdragon NPU, and escalates only the genuinely hard steps to a cloud multi-agent
 planner — degrading gracefully to fully-offline when disconnected.
 
-It is one MIT codebase that addresses three complementary capability dimensions:
+The **engine** is what makes this a product and not a wrapper: a **calibrated
+edge↔cloud escalation gate** (`router/router_policy.py`) that decides, per task,
+what runs where — with a conformal bound on dangerous mis-routes and a
+hardware/offline guard that always has the final say. Everything else — the
+on-device backends, the cloud planner, the offline fabric — exists to serve that
+one decision.
 
-| Dimension | What HARP demonstrates |
-|---|---|
-| **On-device inference** | NPU inference, energy/latency efficiency, multi-device orchestration on Snapdragon hardware |
-| **Cloud multi-agent planning** | cloud multi-agent planning on NeMo/Nemotron with measured optimization |
-| **Hybrid edge-cloud vision** | the full hybrid architecture at Bharat scale |
+| Layer | What it is | Why it matters |
+|---|---|---|
+| **Product** | a device-first agentic assistant, offline-resilient | the thing a user actually runs |
+| **Engine (the IP)** | the calibrated edge↔cloud escalation gate | the defensible core: *what runs where* |
+| **Proof** | NPU efficiency (edge) + multi-agent planning (cloud) | measured evidence both lanes of the gate are real |
 
 ## 3. Users
 
@@ -85,7 +91,7 @@ It is one MIT codebase that addresses three complementary capability dimensions:
 - Risk-A gate **PASS** on real silicon (NPU engaged, ≥15 tok/s, energy reported).
 - Risk-B: routing probe 0 silent mis-routes, p95 gate overhead < 50 ms.
 - Demo runs end-to-end in one command, online and offline, and across two nodes.
-- All CI gates green on every push (currently 9).
+- All CI gates green on every push (currently 15 + demo-integration).
 
 ## 8. Kill-risk gates (feasibility before commitment)
 
@@ -97,8 +103,9 @@ It is one MIT codebase that addresses three complementary capability dimensions:
 
 ## 9. Open decisions
 
-- **Vertical scope:** the current design is a horizontal platform; a Bharat-voice
-  default persona remains under active consideration and is not yet locked.
+- **Vertical scope:** HARP leads as a **product** (a device-first agentic assistant)
+  whose defensible core is the escalation engine. A specific default persona (e.g. a
+  voice-first operator) is a packaging choice on top of that engine, not yet locked.
 - **Router tuning:** router-only SFT/LoRA fine-tune is confirmed; Nemotron→edge
   distillation is a flex roadmap item.
 - **Device topology (confirmed):** X Elite PC + Snapdragon 8 Elite phone + Arduino

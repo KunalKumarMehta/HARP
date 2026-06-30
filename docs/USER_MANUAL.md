@@ -26,13 +26,20 @@ python -m demo.run_demo --genie         # use the Genie swarm edge path (stub of
 python -m demo.run_demo --live "Summarize this call and decide next action"  # needs NIM key
 ```
 
-Run the full contract gate (what CI runs — 9 checks):
+Run the core contract gates locally (CI runs the full 15 — see
+`.github/workflows/ci.yml`, or `make check` for this subset):
 ```bash
 for g in shared.conformance fabric.sync_queue tests.e2e_smoke tests.ws_roundtrip \
          shared.plan_codec tests.executor_smoke edge.genie_backend fabric.remote_backend; do
   python -m $g || exit 1
 done
 python -c "import asyncio; from shared.harp_contract import _smoke; asyncio.run(_smoke())"
+```
+
+To serve HARP as an OpenAI-compatible local model (the seam the Hermes integration
+points at):
+```bash
+python -m serve.openai_endpoint            # :8765 — see integrations/hermes/README.md
 ```
 
 ---
@@ -61,8 +68,8 @@ edge\bootstrap_qdc.cmd -WithOnnx                     :: also install onnxruntime
 edge\bootstrap_qdc.cmd -QairtZip C:\path\qairt-2.45.zip   :: if no QAIRT is staged
 ```
 
-Connecting to QDC (from `edge/qualcomm_ssh_help.md`): SSH-tunnel via
-`ssh.qdc.qualcomm.com`, optionally RDP-forward `:3389` to reach the desktop.
+Connecting to QDC: SSH-tunnel via `ssh.qdc.qualcomm.com` using the host/credentials
+from your QDC reservation, optionally RDP-forward `:3389` to reach the desktop.
 
 ---
 
