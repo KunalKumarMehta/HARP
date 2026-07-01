@@ -26,7 +26,7 @@ python -m demo.run_demo --genie         # use the Genie swarm edge path (stub of
 python -m demo.run_demo --live "Summarize this call and decide next action"  # needs NIM key
 ```
 
-Run the core contract gates locally (CI runs the full 15 — see
+Run the core contract gates locally (CI runs the full 16 — see
 `.github/workflows/ci.yml`, or `make check` for this subset):
 ```bash
 for g in shared.conformance fabric.sync_queue tests.e2e_smoke tests.ws_roundtrip \

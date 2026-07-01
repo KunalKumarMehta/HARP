@@ -1,0 +1,19 @@
+{
+  "n": 300,
+  "alpha": 0.1,
+  "local_model": "nemotron-mini",
+  "cloud_model": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+  "local_acc": 0.5,
+  "cloud_acc": 0.9666666666666667,
+  "cloud_n": 60,
+  "delta": 0.05199999999999999,
+  "under_route": 0.025,
+  "under_ci": [
+    0.0,
+    0.075
+  ],
+  "over_route": 0.04,
+  "escalation_rate": 0.45555555555555555,
+  "n_wrong_total": 150,
+  "test_wrong": 40
+}

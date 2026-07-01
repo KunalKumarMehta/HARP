@@ -4,23 +4,29 @@
 
 ## 1. Problem
 
-People want a capable AI assistant that works on the device in their hand —
-private, instant, and useful even with no signal. The two obvious options both
-fail them: routing every request to a cloud LLM is expensive, slow, leaks privacy,
-and dies without a network; pure on-device inference can't reason hard enough on
-its own. Neither extreme is something a person can rely on.
+The capable-device era has arrived: the machine in your hand or on your desk —
+Apple Silicon, Snapdragon X, an AI PC, a flagship phone — is now strong enough to
+run real models locally. Yet assistants still route every request to a cloud LLM:
+expensive, slow, privacy-leaking, and dead without a network. Pure on-device
+inference is the opposite failure — private and instant, but it can't reason hard
+enough on its own. Neither extreme uses the hardware people already own well.
+
+HARP is for people **with** a capable device — not for users with no local
+hardware. The premise is that their device should be the default, with the cloud as
+backup for the genuinely hard steps.
 
 ## 2. Product
 
-**HARP** is a hardware-aware agentic assistant: it runs on your device and
-escalates to the cloud only when a task genuinely needs it. A lightweight edge
-gatekeeper de-noises input and triages device state, runs what fits on the
-Snapdragon NPU, and escalates only the genuinely hard steps to a cloud multi-agent
-planner — degrading gracefully to fully-offline when disconnected.
+**HARP** is a hardware-aware agentic assistant: it runs on-device and escalates to
+the cloud only when a task genuinely needs it. A lightweight on-device gatekeeper
+de-noises input and triages device state, runs what fits on local silicon (Apple
+Silicon, Snapdragon X, an AI PC, a flagship phone), and escalates only the genuinely
+hard steps to a cloud multi-agent planner — degrading gracefully to fully-offline
+when disconnected.
 
 The **engine** is what makes this a product and not a wrapper: a **calibrated
-edge↔cloud escalation gate** (`router/router_policy.py`) that decides, per task,
-what runs where — with a conformal bound on dangerous mis-routes and a
+on-device↔cloud escalation gate** (`router/router_policy.py`) that decides, per
+task, what runs where — with a conformal bound on dangerous mis-routes and a
 hardware/offline guard that always has the final say. Everything else — the
 on-device backends, the cloud planner, the offline fabric — exists to serve that
 one decision.
@@ -28,13 +34,16 @@ one decision.
 | Layer | What it is | Why it matters |
 |---|---|---|
 | **Product** | a device-first agentic assistant, offline-resilient | the thing a user actually runs |
-| **Engine (the IP)** | the calibrated edge↔cloud escalation gate | the defensible core: *what runs where* |
-| **Proof** | NPU efficiency (edge) + multi-agent planning (cloud) | measured evidence both lanes of the gate are real |
+| **Engine (the IP)** | the calibrated on-device↔cloud escalation gate | the defensible core: *what runs where* |
+| **Proof** | NPU efficiency (on-device) + multi-agent planning (cloud) | measured evidence both lanes of the gate are real |
 
 ## 3. Users
 
-- **Primary (demo persona):** a Bharat micro-enterprise/kirana operator using a
-  voice-first agent on a low-connectivity phone.
+- **Primary:** owners of a capable device — an Apple Silicon Mac, a Snapdragon X
+  laptop, an AI PC, or a flagship phone — who want a private, instant, offline-capable
+  assistant that uses the hardware they already paid for, not a metered cloud round-trip.
+- **A demonstrative scenario:** a field / low-connectivity operator whose device must
+  keep working when the network doesn't — the offline lane made concrete.
 - **Operators / evaluators:** teams assessing on-device efficiency, agentic
   architecture quality, and product legibility.
 - **Developers:** contributors building specialists/backends against a frozen contract.
@@ -91,13 +100,14 @@ one decision.
 - Risk-A gate **PASS** on real silicon (NPU engaged, ≥15 tok/s, energy reported).
 - Risk-B: routing probe 0 silent mis-routes, p95 gate overhead < 50 ms.
 - Demo runs end-to-end in one command, online and offline, and across two nodes.
-- All CI gates green on every push (currently 15 + demo-integration).
+- All CI gates green on every push (currently 16 + demo-integration).
 
 ## 8. Kill-risk gates (feasibility before commitment)
 
 - **Risk A — edge executor is real:** a quantized SLM runs on the NPU with measured
-  tok-s/energy. *De-risked:* a precompiled Qwen3-4B Genie bundle ships in `build/`;
-  Risk A is now run-and-measure, not compile.
+  tok-s/energy. *De-risked:* a precompiled Qwen3-4B Genie bundle is provisioned into
+  `build/` (git-ignored; staged by `edge\bootstrap_qdc.cmd`), so Risk A is now
+  run-and-measure, not compile.
 - **Risk B — router is real:** calibrated `{local|escalate}` under the latency
   budget with no silent mis-routes.
 

@@ -49,7 +49,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from shared.harp_contract import Backend, InferRequest, Modality, RouteDecision, Tier
-from router.router_policy import RoutingFeatures, RoutingPolicy
+from router.router_policy import RoutingFeatures, RoutingPolicy, demo_calibration
 
 
 # ---------------------------------------------------------------- config
@@ -108,13 +108,12 @@ def _strip_tool_calls(text: str) -> str:
 
 
 # ---------------------------------------------------------------- default policy
-# Same synthetic calibration the e2e smoke uses, so the endpoint's AUTO gate is
-# the real conformal gate, not a stub.
+# Non-separable synthetic calibration (shared with demos + the self-test), so the
+# endpoint's AUTO gate is the real conformal gate on honest data, not a separable
+# toy array. The measured-on-real-hardware number lives in mac_demo/calibrate_real.py.
 
 def _default_policy() -> RoutingPolicy:
-    cal_u = [i / 200.0 for i in range(200)]
-    cal_err = [1 if (i % 100) / 100.0 < cal_u[i] else 0 for i in range(200)]
-    return RoutingPolicy().calibrate(cal_u, cal_err)
+    return RoutingPolicy().calibrate(*demo_calibration())
 
 
 def _classifier_name(state) -> str:

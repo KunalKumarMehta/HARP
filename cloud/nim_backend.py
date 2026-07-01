@@ -8,7 +8,7 @@ QNNBackend — negotiates Capability, calls infer()/profile(), never
 imports this class.
 
 NIM API specification (NVIDIA Nemotron):
-  - base: https://integrate.api.nvidia.com/v1 ; auth: Bearer $NVIDIA_API_KEY
+  - base: https://integrate.api.nvidia.com/v1 ; auth: Bearer $HARP_NIM_API_KEY
   - reasoning models stream CoT on delta.reasoning_content, answer on delta.content
     Both are handled; TTFT lands on the FIRST token of EITHER stream (true
     first-generation instant).

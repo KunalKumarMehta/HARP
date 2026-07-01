@@ -36,7 +36,7 @@ python -m demo.run_demo --distributed # run the edge tier on a separate fabric n
 
 ## Run the gates before you push
 
-These are the core contract gates (also `make check`); CI runs the full 15
+These are the core contract gates (also `make check`); CI runs the full 16
 (`.github/workflows/ci.yml`). Run them locally first — all must pass:
 
 ```bash

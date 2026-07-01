@@ -29,5 +29,8 @@ build/
 evidence_pack*.md
 evidence_pack*.json
 
+# Demo runtime state (regenerated each run; the calibration evidence IS committed)
+mac_demo/harp_notes.jsonl
+
 # local validation venv (hermes branch)
 .venv-hermes/

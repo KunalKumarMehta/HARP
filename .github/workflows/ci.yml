@@ -217,10 +217,31 @@ jobs:
       - name: Run skill packaging
         run: python tests/test_skill_packaging.py
 
-  # Gate 15: Track-A live-demo artifact (demo/track_a_routing_demo)
-  # Covers: 6-turn routing table + trace.jsonl with a real local/escalate split
-  track-a-demo:
-    name: "Gate 15: Track-A Demo"
+  # Gate 15: canonical on-device demos (mac_demo/*, --mock, stdlib only)
+  # Covers: the runnable Mac+Nemotron routing table — 6 turns, on-device + escalate
+  # across complexity + contention, offline fail-closed — plus the plan-DAG and bench
+  # demos in mock so none can rot. This is the headline demo.
+  ondevice-demo:
+    name: "Gate 15: On-Device Demo"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Routing gate test (mock)
+        run: python tests/test_mac_demo.py
+      - name: Run the canonical demo (prints the routing table)
+        run: python mac_demo/harp_demo.py --mock
+      - name: Smoke the plan-DAG + bench demos (mock, stdlib only)
+        run: |
+          python mac_demo/plan_demo.py --mock
+          python mac_demo/bench_demo.py --mock
+
+  # Gate 16: secondary routing-demo artifact (demo/track_a_routing_demo)
+  # Covers: the endpoint-backed /v1/route demo — 6-turn table + trace.jsonl split
+  routing-demo-secondary:
+    name: "Gate 16: Routing Demo (secondary)"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -229,7 +250,7 @@ jobs:
           python-version: "3.11"
       - name: Install deps
         run: pip install -q fastapi httpx
-      - name: Run Track-A routing demo test
+      - name: Run routing demo test
         run: python tests/test_track_a_demo.py
       - name: Run the demo end-to-end (prints the routing table)
         run: python demo/track_a_routing_demo.py
@@ -259,7 +280,7 @@ jobs:
   all-gates:
     name: "✅ All Gates Pass"
     runs-on: ubuntu-latest
-    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend, serve-endpoint, router-contention, hermes-provider, route-and-hook, skill-packaging, track-a-demo, demo-integration]
+    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend, serve-endpoint, router-contention, hermes-provider, route-and-hook, skill-packaging, ondevice-demo, routing-demo-secondary, demo-integration]
     if: always()
     steps:
       - name: Check all gates
@@ -278,9 +299,10 @@ jobs:
              [[ "${{ needs.hermes-provider.result }}" != "success" ]] ||
              [[ "${{ needs.route-and-hook.result }}" != "success" ]] ||
              [[ "${{ needs.skill-packaging.result }}" != "success" ]] ||
-             [[ "${{ needs.track-a-demo.result }}" != "success" ]] ||
+             [[ "${{ needs.ondevice-demo.result }}" != "success" ]] ||
+             [[ "${{ needs.routing-demo-secondary.result }}" != "success" ]] ||
              [[ "${{ needs.demo-integration.result }}" != "success" ]]; then
             echo "::error::One or more gates failed"
             exit 1
           fi
-          echo "All 15 gates + demo integration passed"
+          echo "All 16 gates + demo integration passed"

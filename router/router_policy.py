@@ -37,6 +37,8 @@ Integration:
 
 from __future__ import annotations
 
+import math
+import random
 import re
 import time
 from dataclasses import dataclass
@@ -133,9 +135,14 @@ class IsotonicCalibrator:
 
 
 # ---------------------------------------------------------------- conformal escalation gate
-# delta = (1-alpha) quantile of u among calibration queries the edge handled
-# CORRECTLY. Escalate iff u > delta. Marginal guarantee: Pr[edge wrong & kept
-# local] <= alpha. This is the asymmetric under-route bound, by construction.
+# delta = lower alpha-quantile of u among calibration queries the edge got
+# WRONG. Escalate iff u > delta, so at most ~alpha of hard (edge-wrong) queries
+# are kept local. Marginal guarantee: Pr[kept local | edge wrong] <= alpha — the
+# asymmetric UNDER-route bound (the dangerous direction), by construction.
+# Over-routing (correct queries needlessly escalated) floats as the disclosed
+# cost; a single threshold on a noisy score cannot bound both directions.
+# NOTE: calibrating on the CORRECT set instead bounds over-routing (cost), the
+# reverse of what this gate is for — do not "simplify" it back.
 
 class ConformalGate:
     def __init__(self, alpha: float = 0.05) -> None:
@@ -144,12 +151,34 @@ class ConformalGate:
         self._fitted = False
 
     def fit(self, u: Sequence[float], err: Sequence[int]) -> "ConformalGate":
-        correct = sorted(ui for ui, ei in zip(u, err) if ei == 0)
-        if not correct:
-            return self
-        n = len(correct)
-        rank = max(0, min(n - 1, int((1 - self.alpha) * (n + 1)) - 1))
-        self.delta = correct[rank]
+        """u: raw uncertainty per calibration query. err: 1 if the edge was wrong.
+        Calibrate on the edge-WRONG queries so the gate bounds under-routing:
+        delta = the largest score among wrong queries whose INCLUSIVE rank stays
+        within the alpha budget. Tie-robust: a crude/discrete score piles many
+        wrong queries at one value, and keeping that whole tie group local would
+        blow the bound (escalate uses u > delta), so delta steps below the group
+        (down to -inf = escalate everything). On a continuous score this reduces
+        to the usual lower alpha-quantile."""
+        wrong = sorted(ui for ui, ei in zip(u, err) if ei == 1)
+        if not wrong:
+            return self                     # no observed edge failures -> delta stays +inf
+        n = len(wrong)
+        budget = int(self.alpha * (n + 1))  # max # of wrong we may keep local
+        # Largest delta with #{wrong <= delta} <= budget. delta may sit BETWEEN
+        # calibration scores: park it just below the first tie group that would
+        # blow the budget, so everything below stays local and the group (and up)
+        # escalates. Stays +inf only if every wrong query fits under the budget.
+        self.delta = float("inf")
+        prefix, i = 0, 0
+        while i < n:
+            j = i
+            while j + 1 < n and wrong[j + 1] == wrong[i]:
+                j += 1                       # tie group at wrong[i]
+            if prefix + (j - i + 1) > budget:
+                self.delta = math.nextafter(wrong[i], float("-inf"))
+                break
+            prefix += j - i + 1
+            i = j + 1
         self._fitted = True
         return self
 
@@ -351,16 +380,47 @@ class PolicyRouter(Router):
 
 # ---------------------------------------------------------------- self-test (Risk B shape)
 
-def _selftest() -> None:
-    # synthetic calibration set: u in [0,1], edge wrong more often as u rises
-    cal_u, cal_err = [], []
-    for i in range(200):
-        u = i / 200.0
-        cal_u.append(u)
-        cal_err.append(1 if (i % 100) / 100.0 < u else 0)   # err prob ~ u
+def _synth_calibration(n: int, seed: int) -> tuple[list[float], list[int]]:
+    """Non-separable calibration data: difficulty u ~ U(0,1); the edge is wrong
+    with probability rising smoothly in u (OVERLAPPING classes — not separable,
+    the honest case real traces produce). Deterministic via seed. A separable
+    set would make any threshold look perfect; this one actually tests the bound."""
+    rng = random.Random(seed)
+    u, err = [], []
+    for _ in range(n):
+        x = rng.random()
+        p_wrong = 1.0 / (1.0 + math.exp(-8.0 * (x - 0.5)))
+        u.append(x)
+        err.append(1 if rng.random() < p_wrong else 0)
+    return u, err
 
-    pol = RoutingPolicy().calibrate(cal_u, cal_err)
-    print(f"conformal delta (alpha={pol.gate.alpha}) = {pol.gate.delta:.3f}")
+
+def demo_calibration() -> tuple[list[float], list[int]]:
+    """(u, err) for calibrating the gate in demos / the serve endpoint. A
+    non-separable synthetic set — NOT a separable toy array, and NOT the arithmetic
+    trace from mac_demo/calibrate_real.py (whose delta is tuned to that distribution
+    and would mis-route the demo's prompts). The real measured under-route number
+    lives in that trace; this just gives the demo a sane, honestly-synthetic gate."""
+    return _synth_calibration(4000, 0)
+
+
+def _selftest() -> None:
+    alpha = 0.10
+    cal_u, cal_err = _synth_calibration(4000, seed=0)
+    pol = RoutingPolicy(gate=ConformalGate(alpha=alpha)).calibrate(cal_u, cal_err)
+    print(f"conformal delta (alpha={alpha}) = {pol.gate.delta:.3f}")
+
+    # Honest, non-circular bound check: on a FRESH non-separable split, the rate
+    # at which a genuinely-hard (edge-wrong) query is kept local must be <= alpha
+    # (+ a small finite-sample tolerance). This is the guarantee the gate sells.
+    te_u, te_err = _synth_calibration(20000, seed=1)
+    wrong = [ui for ui, ei in zip(te_u, te_err) if ei == 1]
+    right = [ui for ui, ei in zip(te_u, te_err) if ei == 0]
+    under = sum(1 for ui in wrong if not pol.gate.escalate(ui)) / len(wrong)
+    over = sum(1 for ui in right if pol.gate.escalate(ui)) / len(right)
+    print(f"under-route Pr[kept local | edge wrong] = {under:.3f}  (bound <= {alpha})")
+    print(f"over-route  Pr[escalated | edge right]  = {over:.3f}  (the disclosed cost)")
+    assert under <= alpha + 0.03, f"UNDER-ROUTE BOUND VIOLATED: {under:.3f} > {alpha}"
 
     probe = [
         ("hi", Modality.TEXT, RouteDecision.LOCAL),
@@ -385,7 +445,8 @@ def _selftest() -> None:
 
     p95 = sorted(overheads)[int(0.95 * (len(overheads) - 1))]
     print(f"\naccuracy {hits}/{len(probe)}  p95 overhead {p95:.3f}ms  "
-          f"(gate budget: <50ms, target 0 silent mis-routes)")
+          f"(gate budget: <50ms; under-route bounded at alpha={alpha})")
+    assert hits == len(probe), "routing probe regressed"
 
 
 async def _integration_test() -> None:
@@ -394,9 +455,8 @@ async def _integration_test() -> None:
     import asyncio
     from shared.harp_contract import mock_edge, mock_cloud
 
-    cal_u = [i / 200.0 for i in range(200)]
-    cal_err = [1 if (i % 100) / 100.0 < cal_u[i] else 0 for i in range(200)]
-    pol = RoutingPolicy().calibrate(cal_u, cal_err)
+    cal_u, cal_err = _synth_calibration(4000, seed=0)
+    pol = RoutingPolicy(gate=ConformalGate(alpha=0.10)).calibrate(cal_u, cal_err)
     pr = PolicyRouter(mock_edge(), mock_cloud(), pol, online=True)
 
     cases = [

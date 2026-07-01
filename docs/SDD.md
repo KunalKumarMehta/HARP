@@ -37,7 +37,7 @@ everything depends on it. CI gate 1 + conformance (gate 2) protect it.
 | `edge/genie_backend.py` | precompiled Genie bundle backend (fast path) | `GenieBackend`, `genie_qwen3_4b()`, `genie_swarm()` |
 | `edge/qnn_backend.py` | self-compiled onnxruntime-genai backend | `QNNBackend` |
 | `edge/bench*.py`, `power.py` | Risk-A gate + energy/latency evidence | `run_gate`, `ProfilableBackend` |
-| `cloud/*` | NIM backend, ReWOO emitter, NAT middleware, dedup | `NIMBackend`, `emit_plan_graph`, `emit_first_plan` |
+| `cloud/*` | NIM backend, ReWOO emitter, NAT middleware, dedup | `NIMBackend`, `emit_plan_graph`, `emit()` |
 | `serve/openai_endpoint.py` | OpenAI-compatible endpoint + advisory `/v1/route` | `make_app()`, `_resolve_route()`, NPU single-flight |
 | `integrations/hermes/*` | Hermes model-provider plugin + `pre_llm_call` routing hook | `build_harp_provider_profile()`, `decide_override()` |
 | `demo/run_demo.py` | the whole spine in one command | — |
@@ -113,7 +113,7 @@ Every contract invariant is a runnable CI gate (`.github/workflows/ci.yml`).
 
 | Gate | Command | Covers |
 |---|---|---|
-| 1 | `harp_contract._smoke` | FR1/FR2 swap, offline fail-closed, metrics |
+| 1 | `shared.harp_contract._smoke` | FR1/FR2 swap, offline fail-closed, metrics |
 | 2 | `shared.conformance` | FR1 ABC conformance (mocks + any real backend) |
 | 3 | `fabric.sync_queue` | FR8 four-state FSM, crash recovery, conflict |
 | 4 | `tests.e2e_smoke` | FR2 AUTO calibration + pins + fail-closed |
@@ -122,10 +122,10 @@ Every contract invariant is a runnable CI gate (`.github/workflows/ci.yml`).
 | 7 | `tests.executor_smoke` | FR4 dataflow threading, failure-skip, boundary-safety, cycle reject |
 | 8 | `edge.genie_backend` | FR5 Genie conformance + swarm discovery (off-device stub) |
 | 9 | `fabric.remote_backend` | FR7 multi-device over real socket + truncation-raises |
-| 10 | `tests.test_endpoint_contract` + `test_npu_single_flight` + `test_tools_thinking_off` | serve schema/stream/tool_calls, NPU single-flight + overflow-shed, tools→no-CoT |
+| 10 | `tests.test_endpoint_contract` + `tests.test_npu_single_flight` + `tests.test_tools_thinking_off` | serve schema/stream/tool_calls, NPU single-flight + overflow-shed, tools→no-CoT |
 | 11 | `tests.test_router_contention` | contention shed when NPU busy; never-shed offline |
 | 12 | `tests.test_hermes_provider` | Hermes ProviderProfile factory keys/values, aux-lane pin |
-| 13 | `tests.test_route_endpoint` + `test_pre_llm_call_hook` | advisory `/v1/route`; hook fail-safe + `**kwargs` |
+| 13 | `tests.test_route_endpoint` + `tests.test_pre_llm_call_hook` | advisory `/v1/route`; hook fail-safe + `**kwargs` |
 | 14 | `tests.test_skill_packaging` | agentskills.io SKILL.md frontmatter, `hardware_probe` graceful |
 | 15 | `tests.test_track_a_demo` | 6-turn routing table + `trace.jsonl` local/escalate split |
 

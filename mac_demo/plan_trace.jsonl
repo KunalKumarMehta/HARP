@@ -1,0 +1,4 @@
+{"step": "n1", "tier": "on-device", "reason": "on_device", "score": 0.23, "ms": 0, "task": "Summarize field note 1 (north plot): standing water after rain.", "output": ""}
+{"step": "n2", "tier": "on-device", "reason": "on_device", "score": 0.24, "ms": 0, "task": "Summarize field note 2 (south plot): early yellowing on wheat tips.", "output": ""}
+{"step": "n3", "tier": "on-device", "reason": "on_device", "score": 0.11, "ms": 0, "task": "List the top risks from n1_output and n2_output.", "output": ""}
+{"step": "n4", "tier": "cloud", "reason": "planner_pin", "score": 0.86, "ms": 0, "task": "From n3_output, design a step-by-step prioritized 7-day action plan across all plots, reasoning about the rainfall forecast.", "output": ""}
