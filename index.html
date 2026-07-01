@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HARP — a calibrated on-device↔cloud router</title>
+<meta name="description" content="HARP is an offline-capable assistant built on a calibrated routing gate: it runs each task on the silicon you own when it can, escalates to the cloud only when a task genuinely needs it, and keeps working offline. Under-routing measured at 2.5% on real hardware." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --paper:#E7E2D4; --paper-2:#DED8C6; --panel:#EFEBDF; --rule:#C7C0AD; --rule-2:#D6CFBD;
+    --ink:#191A17; --ink-2:#4B4C42; --ink-3:#7C7C6E;
+    --local:#0E7561; --local-ink:#0A5445; --cloud:#C0561B; --cloud-ink:#94420f;
+    --scope:#191C17; --scope-2:#20241d; --scope-line:#333a2e;
+    --scope-local:#3FC6A6; --scope-cloud:#F0913E; --scope-ink:#D8DAC9; --scope-mute:#8b917d;
+    --max:1120px;
+    --disp:"Space Grotesk",ui-sans-serif,system-ui,sans-serif;
+    --body:"IBM Plex Sans",ui-sans-serif,system-ui,sans-serif;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:var(--body); font-weight:400; line-height:1.6; font-size:16px;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  }
+  a{color:inherit; text-decoration:none}
+  h1,h2,h3{font-family:var(--disp); line-height:1.05; letter-spacing:-.02em; margin:0; font-weight:600}
+  ::selection{background:var(--local); color:var(--paper)}
+
+  .wrap{max-width:var(--max); margin:0 auto; padding:0 26px}
+  .mono{font-family:var(--mono)}
+  .label{font-family:var(--mono); font-size:11.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-3); font-weight:500}
+  .eyebrow{font-family:var(--mono); font-size:12px; letter-spacing:.2em; text-transform:uppercase; font-weight:500; color:var(--local-ink); display:inline-flex; align-items:center; gap:9px}
+  .eyebrow::before{content:""; width:22px; height:1px; background:var(--local)}
+  .lead{color:var(--ink-2); font-size:18px; max-width:60ch; margin:18px 0 0}
+  .rule{height:1px; background:var(--rule); border:0; margin:0}
+
+  section{padding:82px 0; border-top:1px solid var(--rule)}
+  .sec-head h2{font-size:clamp(27px,3.6vw,40px); max-width:20ch}
+
+  /* ---- nav ---- */
+  .nav{position:sticky; top:0; z-index:30; background:color-mix(in srgb,var(--paper) 86%,transparent); backdrop-filter:blur(8px); border-bottom:1px solid var(--rule)}
+  .nav .wrap{display:flex; align-items:center; justify-content:space-between; height:58px}
+  .brand{display:flex; align-items:center; gap:11px; font-family:var(--disp); font-weight:700; letter-spacing:.01em; font-size:17px}
+  .brand .g{width:24px; height:24px; border:1.5px solid var(--ink); border-radius:5px; position:relative; display:grid; place-items:center}
+  .brand .g::before{content:""; position:absolute; left:50%; top:3px; bottom:3px; width:1.5px; background:var(--cloud); transform:translateX(-.75px)}
+  .brand .g::after{content:""; width:6px; height:6px; border-radius:50%; background:var(--local); margin-right:9px}
+  .nav-links{display:flex; gap:26px; font-family:var(--mono); font-size:13px; color:var(--ink-2)}
+  .nav-links a:hover{color:var(--local-ink)}
+  .nav-cta{font-family:var(--mono); font-size:13px; font-weight:500; border:1px solid var(--ink); border-radius:7px; padding:7px 13px}
+  .nav-cta:hover{background:var(--ink); color:var(--paper)}
+  @media(max-width:780px){ .nav-links{display:none} }
+
+  /* ---- hero ---- */
+  .hero{padding:70px 0 78px; border-top:0}
+  .hero-grid{display:grid; grid-template-columns:1.02fr .98fr; gap:48px; align-items:center}
+  .hero h1{font-size:clamp(36px,5.4vw,60px); font-weight:600; letter-spacing:-.03em; max-width:15ch}
+  .hero h1 em{font-style:normal; color:var(--local-ink); position:relative; white-space:nowrap}
+  .hero h1 em.cl{color:var(--cloud-ink)}
+  .hero .lead{font-size:19px; max-width:52ch}
+  .cta{margin-top:32px; display:flex; gap:12px; flex-wrap:wrap}
+  .btn{font-family:var(--mono); font-size:14px; font-weight:500; padding:12px 20px; border-radius:9px; border:1px solid var(--ink); display:inline-flex; align-items:center; gap:8px}
+  .btn.solid{background:var(--ink); color:var(--paper)} .btn.solid:hover{background:var(--local-ink); border-color:var(--local-ink)}
+  .btn.ghost:hover{background:var(--paper-2)}
+  .hero-meta{margin-top:26px; display:flex; gap:8px 20px; flex-wrap:wrap; font-family:var(--mono); font-size:12.5px; color:var(--ink-3)}
+  .hero-meta b{color:var(--ink); font-weight:500}
+
+  /* ---- the instrument (signature) ---- */
+  .scope{background:
+      linear-gradient(rgba(216,218,201,.05) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(216,218,201,.05) 1px,transparent 1px),
+      var(--scope);
+    background-size:22px 22px,22px 22px,auto; color:var(--scope-ink); border-radius:14px; padding:22px 22px 20px; font-family:var(--mono);
+    box-shadow:0 30px 60px -34px rgba(25,28,23,.7), inset 0 1px 0 rgba(255,255,255,.04); position:relative; overflow:hidden}
+  .scope .sc-top{display:flex; justify-content:space-between; align-items:center; font-size:11.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--scope-mute)}
+  .scope .live{display:inline-flex; align-items:center; gap:7px; color:var(--scope-local)}
+  .scope .live .d{width:7px; height:7px; border-radius:50%; background:var(--scope-local); box-shadow:0 0 0 0 rgba(63,198,166,.6)}
+  .plot{position:relative; height:150px; margin:20px 0 6px; border-bottom:1px solid var(--scope-line)}
+  .plot .zone{position:absolute; top:0; bottom:0; font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; padding:6px 8px}
+  .zone.loc{left:0; width:38%; background:linear-gradient(180deg,rgba(63,198,166,.14),rgba(63,198,166,.02)); border-right:1px dashed var(--scope-line); color:var(--scope-local)}
+  .zone.cld{right:0; width:62%; background:linear-gradient(180deg,rgba(240,145,62,.12),rgba(240,145,62,.02)); text-align:right; color:var(--scope-cloud)}
+  .delta{position:absolute; top:-4px; bottom:0; left:38%; width:1px; background:var(--scope-cloud)}
+  .delta .tag{position:absolute; top:-4px; left:6px; font-size:10px; color:var(--scope-cloud); white-space:nowrap}
+  .bars{position:absolute; left:0; right:0; bottom:0; height:96px; display:flex; align-items:flex-end; gap:3px; padding:0 2px}
+  .bars i{flex:1; background:linear-gradient(180deg,rgba(216,218,201,.5),rgba(216,218,201,.12)); border-radius:2px 2px 0 0}
+  .q{position:absolute; transform:translate(-50%,-50%); font-size:10.5px; padding:3px 7px; border-radius:999px; white-space:nowrap; border:1px solid}
+  .q.loc{color:var(--scope-local); border-color:rgba(63,198,166,.5); background:rgba(63,198,166,.08)}
+  .q.cld{color:var(--scope-cloud); border-color:rgba(240,145,62,.5); background:rgba(240,145,62,.08)}
+  .axis{display:flex; justify-content:space-between; font-size:10.5px; color:var(--scope-mute); margin-top:8px}
+  .readout{display:grid; grid-template-columns:repeat(3,1fr); gap:1px; margin-top:16px; background:var(--scope-line); border:1px solid var(--scope-line); border-radius:9px; overflow:hidden}
+  .readout div{background:var(--scope); padding:12px 13px}
+  .readout .n{font-size:20px; color:var(--scope-ink); font-weight:500; letter-spacing:-.01em}
+  .readout .n.g{color:var(--scope-local)} .readout .n.o{color:var(--scope-cloud)}
+  .readout .k{font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--scope-mute); margin-top:3px}
+  .sweep{position:absolute; top:56px; bottom:74px; width:80px; left:-80px; pointer-events:none;
+    background:linear-gradient(90deg,transparent,rgba(63,198,166,.16),transparent)}
+  @media(prefers-reduced-motion:no-preference){
+    .sweep{animation:sw 5.5s linear infinite}
+    @keyframes sw{0%{left:-80px}100%{left:100%}}
+    .scope .live .d{animation:blink 2.2s ease-in-out infinite}
+    @keyframes blink{0%,100%{box-shadow:0 0 0 0 rgba(63,198,166,.55)}50%{box-shadow:0 0 0 5px rgba(63,198,166,0)}}
+  }
+
+  /* ---- measured ---- */
+  .gauges{display:grid; grid-template-columns:repeat(4,1fr); gap:0; margin-top:34px; border:1px solid var(--rule); border-radius:12px; overflow:hidden; background:var(--panel)}
+  .gauge{padding:24px 22px; border-right:1px solid var(--rule)}
+  .gauge:last-child{border-right:0}
+  .gauge .k{font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-3)}
+  .gauge .v{font-family:var(--disp); font-size:clamp(32px,4vw,44px); font-weight:600; letter-spacing:-.03em; margin:10px 0 2px; line-height:1}
+  .gauge .v.g{color:var(--local-ink)} .gauge .v.o{color:var(--cloud-ink)}
+  .gauge .s{font-family:var(--mono); font-size:12px; color:var(--ink-2)}
+  .measured-note{margin-top:20px; font-size:15px; color:var(--ink-2); max-width:76ch}
+  .measured-note code{font-family:var(--mono); font-size:13px; background:var(--panel); border:1px solid var(--rule); padding:1px 6px; border-radius:5px}
+
+  /* ---- pipeline (real sequence -> numbered) ---- */
+  .pipe{display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-top:34px}
+  .step{border-top:2px solid var(--ink); padding-top:16px}
+  .step .no{font-family:var(--mono); font-size:12px; color:var(--ink-3); letter-spacing:.1em}
+  .step h3{font-family:var(--disp); font-size:18px; margin:8px 0 6px; font-weight:600}
+  .step p{font-size:14.5px; color:var(--ink-2); margin:0}
+  .step .tick{font-family:var(--mono); font-size:12px; color:var(--local-ink); margin-top:9px}
+  .step.guard{border-top-color:var(--cloud)} .step.guard .tick{color:var(--cloud-ink)}
+  .verdict{margin-top:20px; font-family:var(--mono); font-size:13.5px; color:var(--ink-2); display:flex; gap:10px; align-items:center; flex-wrap:wrap}
+  .chip{font-family:var(--mono); font-size:12px; padding:4px 10px; border-radius:6px; border:1px solid}
+  .chip.loc{color:var(--local-ink); border-color:var(--local)} .chip.cld{color:var(--cloud-ink); border-color:var(--cloud)}
+
+  /* ---- problem ---- */
+  .cards3{display:grid; grid-template-columns:repeat(3,1fr); gap:0; margin-top:34px; border:1px solid var(--rule); border-radius:12px; overflow:hidden; background:var(--panel)}
+  .cell{padding:26px 24px; border-right:1px solid var(--rule)}
+  .cell:last-child{border-right:0}
+  .cell .k{font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--cloud-ink)}
+  .cell h3{font-family:var(--disp); font-size:20px; margin:12px 0 8px; font-weight:600}
+  .cell p{font-size:15px; color:var(--ink-2); margin:0}
+
+  /* ---- architecture ---- */
+  .arch{display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-top:34px}
+  .layer{background:var(--panel); border:1px solid var(--rule); border-radius:12px; padding:22px}
+  .layer .top{display:flex; align-items:center; justify-content:space-between}
+  .layer h3{font-family:var(--disp); font-size:18px; font-weight:600}
+  .fid{font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase; padding:3px 8px; border-radius:5px; border:1px solid}
+  .fid.live{color:var(--local-ink); border-color:var(--local); background:rgba(14,117,97,.06)}
+  .fid.meas{color:var(--cloud-ink); border-color:var(--cloud); background:rgba(192,86,27,.06)}
+  .fid.des{color:var(--ink-3); border-color:var(--rule)}
+  .layer ul{margin:14px 0 0; padding-left:0; list-style:none; font-family:var(--mono); font-size:13px; color:var(--ink-2)}
+  .layer li{padding:6px 0; border-top:1px solid var(--rule)}
+  .layer li:first-child{border-top:0}
+  .contract{margin-top:16px; font-family:var(--mono); font-size:13px; color:var(--ink-2); background:var(--panel); border:1px dashed var(--rule); border-radius:10px; padding:16px 18px}
+  .contract b{color:var(--ink); font-weight:600}
+
+  /* ---- run ---- */
+  .run{background:var(--scope); color:var(--scope-ink); border-radius:12px; padding:26px 24px; margin-top:32px; font-family:var(--mono); font-size:13.5px; line-height:1.9; overflow-x:auto}
+  .run .c{color:var(--scope-mute)}
+  .run .p{color:var(--scope-local)}
+  .run b{color:var(--scope-ink); font-weight:400}
+
+  /* ---- differentiation ---- */
+  .diff{margin-top:30px; border:1px solid var(--rule); border-radius:12px; overflow:hidden; background:var(--panel)}
+  .diff .row{display:grid; grid-template-columns:1fr auto auto; gap:14px; align-items:center; padding:15px 22px; border-top:1px solid var(--rule); font-size:15px}
+  .diff .row:first-child{border-top:0; font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-3)}
+  .diff .row .h{color:var(--ink-2)}
+  .diff .us{font-family:var(--mono); font-weight:500; color:var(--local-ink); text-align:center; min-width:78px}
+  .diff .them{font-family:var(--mono); color:var(--ink-3); text-align:center; min-width:120px}
+  .diff .row:not(:first-child) .name{font-weight:450}
+
+  /* ---- footer ---- */
+  footer{border-top:1px solid var(--rule); padding:42px 0 60px}
+  footer .wrap{display:flex; justify-content:space-between; gap:20px; flex-wrap:wrap; align-items:flex-end}
+  footer .big{font-family:var(--disp); font-size:22px; font-weight:600; max-width:24ch}
+  footer .meta{font-family:var(--mono); font-size:12.5px; color:var(--ink-3); line-height:1.9; text-align:right}
+  footer .meta a:hover{color:var(--local-ink)}
+
+  :focus-visible{outline:2px solid var(--local); outline-offset:3px; border-radius:4px}
+
+  @media(max-width:900px){
+    .hero-grid{grid-template-columns:1fr; gap:34px}
+    .gauges,.pipe,.arch{grid-template-columns:1fr 1fr}
+    .cards3{grid-template-columns:1fr}
+    .cell,.gauge{border-right:0; border-bottom:1px solid var(--rule)}
+    .cell:last-child,.gauge:last-child{border-bottom:0}
+  }
+  @media(max-width:560px){
+    .gauges,.pipe,.arch{grid-template-columns:1fr}
+    section{padding:60px 0}
+    .diff .row{grid-template-columns:1fr auto; }
+    .diff .them{display:none}
+  }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top"><span class="g"></span>HARP</a>
+    <nav class="nav-links">
+      <a href="#measured">Measured</a>
+      <a href="#how">How it routes</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#run">Run it</a>
+      <a href="#compare">vs cloud routers</a>
+    </nav>
+    <a class="nav-cta" href="https://github.com/KunalKumarMehta/HARP">GitHub&nbsp;↗</a>
+  </div>
+</header>
+
+<!-- ================= HERO ================= -->
+<section class="hero" id="top">
+  <div class="wrap hero-grid">
+    <div>
+      <p class="eyebrow">Calibrated on-device ↔ cloud router</p>
+      <h1 style="margin-top:18px">What runs where — decided on the <em>silicon you own</em>, in under 10&nbsp;ms.</h1>
+      <p class="lead">HARP is an offline-capable assistant built on a calibrated routing gate. It runs each task on your device when it can, escalates to the cloud only when a task genuinely needs it, and keeps working when the network doesn't.</p>
+      <div class="cta">
+        <a class="btn solid" href="#measured">See the measured gate</a>
+        <a class="btn ghost" href="https://github.com/KunalKumarMehta/HARP">Read the code&nbsp;↗</a>
+      </div>
+      <div class="hero-meta">
+        <span><b>2.5%</b> under-routing, measured</span><span>·</span>
+        <span><b>54%</b> stays on-device</span><span>·</span>
+        <span><b>MIT</b>, public from commit 1</span>
+      </div>
+    </div>
+
+    <!-- signature: the live decision boundary -->
+    <div class="scope" role="img" aria-label="A decision-boundary readout: tasks with a low hardness score stay on-device (left of the conformal threshold delta); harder tasks escalate to the cloud (right). Measured under-routing 2.5%, over-routing 4%, 54% kept on-device.">
+      <div class="sc-top">
+        <span>gate · decision boundary</span>
+        <span class="live"><span class="d"></span>live</span>
+      </div>
+      <div class="plot">
+        <div class="sweep"></div>
+        <div class="zone loc">on-device</div>
+        <div class="zone cld">cloud</div>
+        <div class="bars" aria-hidden="true">
+          <i style="height:14%"></i><i style="height:22%"></i><i style="height:34%"></i><i style="height:52%"></i><i style="height:74%"></i><i style="height:92%"></i><i style="height:78%"></i><i style="height:60%"></i><i style="height:44%"></i><i style="height:33%"></i><i style="height:26%"></i><i style="height:31%"></i><i style="height:40%"></i><i style="height:55%"></i><i style="height:72%"></i><i style="height:88%"></i><i style="height:66%"></i><i style="height:48%"></i><i style="height:30%"></i><i style="height:18%"></i>
+        </div>
+        <div class="delta"><span class="tag">δ 0.32</span></div>
+        <span class="q loc" style="left:14%; top:34%">"log this note"</span>
+        <span class="q loc" style="left:26%; top:64%">"summarize"</span>
+        <span class="q cld" style="left:63%; top:30%">"plan 3 days…"</span>
+        <span class="q cld" style="left:83%; top:56%">"derive the…"</span>
+      </div>
+      <div class="axis"><span>u = 0.0 · easy</span><span>hardness score</span><span>1.0 · hard</span></div>
+      <div class="readout">
+        <div><div class="n g">2.5%</div><div class="k">under-route ≤ α</div></div>
+        <div><div class="n o">4%</div><div class="k">over-route cost</div></div>
+        <div><div class="n">54%</div><div class="k">stayed local</div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= MEASURED ================= -->
+<section id="measured">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Measured — 300 paired queries, real hardware</p>
+      <h2 style="margin-top:16px">The gate's guarantee, measured — not asserted.</h2>
+      <p class="lead">300 tasks run on both tiers and labelled by ground truth: on-device <span class="mono">nemotron-mini</span> on Apple&nbsp;Silicon vs NVIDIA <span class="mono">Nemotron-49B</span> in the cloud. The gate escalates exactly the tasks the on-device model gets wrong.</p>
+    </div>
+    <div class="gauges">
+      <div class="gauge">
+        <div class="k">Under-routing · the danger</div>
+        <div class="v g">2.5%</div>
+        <div class="s">90% CI [0%, 7.5%] · below α = 0.05</div>
+      </div>
+      <div class="gauge">
+        <div class="k">Cloud accuracy · escalation target</div>
+        <div class="v">97%</div>
+        <div class="s">vs 50% on-device — escalation recovers them</div>
+      </div>
+      <div class="gauge">
+        <div class="k">Over-routing · the cost</div>
+        <div class="v o">4%</div>
+        <div class="s">correct tasks needlessly escalated</div>
+      </div>
+      <div class="gauge">
+        <div class="k">Kept on-device</div>
+        <div class="v">54%</div>
+        <div class="s">private · instant · free · offline-safe</div>
+      </div>
+    </div>
+    <p class="measured-note"><b style="font-family:var(--disp)">Under-routing is the dangerous direction</b> — a hard task silently kept on a small model. A conformal threshold, fit on the tasks the device gets <em>wrong</em>, bounds it at α. Over-routing floats as the disclosed cost of today's length/keyword score; a trained encoder lowers it. Reproduce: <code>python mac_demo/calibrate_real.py --n 300</code>.</p>
+  </div>
+</section>
+
+<!-- ================= HOW IT ROUTES ================= -->
+<section id="how">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">How a task is routed</p>
+      <h2 style="margin-top:16px">Four steps, in order of authority. Never a raw guess.</h2>
+    </div>
+    <div class="pipe">
+      <div class="step">
+        <div class="no">01 · SCORE</div>
+        <h3>Read the hardness</h3>
+        <p>A single-pass on-device encoder rates the task's hardness <span class="mono">u</span> — no decode, always resident.</p>
+        <div class="tick">&lt; 10 ms, on-device</div>
+      </div>
+      <div class="step">
+        <div class="no">02 · CALIBRATE</div>
+        <h3>Turn score into probability</h3>
+        <p>An isotonic map converts the raw score into a real edge-error probability — stable, not a wobbly margin.</p>
+        <div class="tick">isotonic (PAV)</div>
+      </div>
+      <div class="step">
+        <div class="no">03 · GATE</div>
+        <h3>Bound the danger</h3>
+        <p>A conformal threshold δ, fit on the wrong-set, keeps silent under-routing ≤ α. Escalate iff <span class="mono">u &gt; δ</span>.</p>
+        <div class="tick">conformal · α-bounded</div>
+      </div>
+      <div class="step guard">
+        <div class="no">04 · GUARD</div>
+        <h3>Hardware has final say</h3>
+        <p>Offline, or a task the device can't run? The guard overrides everything and fails closed to local.</p>
+        <div class="tick">never overridden</div>
+      </div>
+    </div>
+    <div class="verdict">
+      <span>→ answers</span>
+      <span class="chip loc">LOCAL</span><span>or</span><span class="chip cld">ESCALATE</span>
+      <span>— with a reason you can read on the <span class="mono">X-HARP-Route</span> header.</span>
+    </div>
+  </div>
+</section>
+
+<!-- ================= PROBLEM ================= -->
+<section id="problem">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Why it matters</p>
+      <h2 style="margin-top:16px">Cloud-only routers route between datacenters. Three kinds of work go unserved.</h2>
+    </div>
+    <div class="cards3">
+      <div class="cell">
+        <div class="k">Low-connectivity</div>
+        <h3>The network isn't a given</h3>
+        <p>A field, a basement clinic, a moving train. A cloud-only router has nothing to fall back to when the link drops — the task just fails.</p>
+      </div>
+      <div class="cell">
+        <div class="k">Privacy-sensitive</div>
+        <h3>The prompt leaves the device</h3>
+        <p>Health notes, financials, personal records. "Route to the best cloud model" still ships every token off the device.</p>
+      </div>
+      <div class="cell">
+        <div class="k">Cost-sensitive</div>
+        <h3>Every task pays rent</h3>
+        <p>A greeting, an acknowledgement, a one-hop lookup — all billed at frontier prices. The cheapest task is the one that never left.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= ARCHITECTURE ================= -->
+<section id="architecture">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Architecture</p>
+      <h2 style="margin-top:16px">One contract. Swap any silicon behind it.</h2>
+      <p class="lead">Every backend satisfies the same interface — <span class="mono">capabilities · infer · profile</span>. The router negotiates capabilities; it never imports a concrete backend. A new accelerator stubs in behind the same contract.</p>
+    </div>
+    <div class="arch">
+      <div class="layer">
+        <div class="top"><h3>On-device</h3><span class="fid live">Live</span></div>
+        <ul>
+          <li>Apple Silicon · Ollama — runs today</li>
+          <li>Snapdragon X · Genie / QNN NPU</li>
+          <li>private · offline-capable · free</li>
+        </ul>
+      </div>
+      <div class="layer">
+        <div class="top"><h3>NPU power</h3><span class="fid meas">Measured</span></div>
+        <ul>
+          <li>Hexagon NPU, reference silicon</li>
+          <li>TTFT · decode tok/s · energy/token</li>
+          <li>sampled on Qualcomm Device Cloud</li>
+        </ul>
+      </div>
+      <div class="layer">
+        <div class="top"><h3>Cloud + fabric</h3><span class="fid des">Designed</span></div>
+        <ul>
+          <li>NVIDIA NIM · Nemotron — heavy reason</li>
+          <li>peer NPU over the WebSocket fabric</li>
+          <li>four-state offline mutation queue</li>
+        </ul>
+      </div>
+    </div>
+    <div class="contract"><b>The router never fights the hardware.</b> Complexity decides <span class="mono">local vs escalate</span>; a separate capability/connectivity guard decides what's physically possible — and always wins. Offline, a queued on-device task still answers; a cloud task fails closed, no silent loss.</div>
+  </div>
+</section>
+
+<!-- ================= RUN IT ================= -->
+<section id="run">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Run it</p>
+      <h2 style="margin-top:16px">Routing on hardware you already own.</h2>
+      <p class="lead">The canonical demo runs on your Mac's Apple Silicon plus NVIDIA Nemotron — real answers, real latencies, offline fail-closed. Mock mode needs nothing but Python.</p>
+    </div>
+    <div class="run">
+      <div><span class="c"># routing table — no models, no keys, stdlib only</span></div>
+      <div><span class="p">$</span> <b>python mac_demo/harp_demo.py --mock</b></div>
+      <div style="height:12px"></div>
+      <div><span class="c"># live: on-device (Ollama) + cloud (Nemotron via NIM), real answers</span></div>
+      <div><span class="p">$</span> <b>python mac_demo/harp_demo.py</b></div>
+      <div><span class="p">$</span> <b>python mac_demo/harp_demo.py --offline</b> <span class="c"># every task fails closed to on-device</span></div>
+      <div style="height:12px"></div>
+      <div><span class="c"># reproduce the measured under-routing number</span></div>
+      <div><span class="p">$</span> <b>python mac_demo/calibrate_real.py --n 300</b></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= DIFFERENTIATION ================= -->
+<section id="compare">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Differentiation</p>
+      <h2 style="margin-top:16px">Others route between clouds. HARP routes across the device boundary.</h2>
+    </div>
+    <div class="diff">
+      <div class="row"><span>Capability</span><span class="us">HARP</span><span class="them">cloud-only routers</span></div>
+      <div class="row"><span class="name">Real on-device execution tier</span><span class="us">yes</span><span class="them">no</span></div>
+      <div class="row"><span class="name">Degrades to fully-offline, fails closed</span><span class="us">yes</span><span class="them">no</span></div>
+      <div class="row"><span class="name">Prompt can stay on the device</span><span class="us">yes</span><span class="them">no</span></div>
+      <div class="row"><span class="name">Under-routing bounded &amp; measured</span><span class="us">2.5%</span><span class="them">unstated</span></div>
+      <div class="row"><span class="name">Hardware-aware — sheds a busy NPU lane</span><span class="us">yes</span><span class="them">no</span></div>
+      <div class="row"><span class="name">Per-task legibility — where &amp; why it ran</span><span class="us">yes</span><span class="them">partial</span></div>
+      <div class="row"><span class="name">Open-source &amp; self-hostable</span><span class="us">MIT</span><span class="them">mostly no</span></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="big">HARP — a calibrated on-device↔cloud router, wrapped in an assistant so you can watch it decide.</div>
+    <div class="meta">
+      MIT · public from commit 1<br>
+      <a href="https://github.com/KunalKumarMehta/HARP">github.com/KunalKumarMehta/HARP&nbsp;↗</a><br>
+      built by Kunal Kumar Mehta
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
