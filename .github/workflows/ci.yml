@@ -255,11 +255,89 @@ jobs:
       - name: Run the demo end-to-end (prints the routing table)
         run: python demo/track_a_routing_demo.py
 
+  # Gate 17: n-gram score head contract (router/ngram_head.py)
+  # Covers: AUC rank-based, calibration artifact, contract range + determinism
+  ngram-score-head:
+    name: "Gate 17: N-gram Score Head"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: gate 17 — n-gram score head contract
+        run: python tests/test_ngram_head.py
+
+  # Gate 18: HF scout ranking (router/hf_scout.py)
+  # Covers: license + size filters, MLX required, deterministic ranking
+  hf-scout:
+    name: "Gate 18: HF Scout"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: gate 18 — hf scout ranking
+        run: python tests/test_hf_scout.py
+
+  # Gate 19: score-head eval harness (evals/eval_score_head.py)
+  # Covers: rubric scoring, adopt/train decision threshold
+  eval-score-head:
+    name: "Gate 19: Score-Head Eval Harness"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: gate 19 — score-head eval harness
+        run: python tests/test_eval_score_head.py
+
+  # Gate 20: local LLM guards + prompt set (router/local_llm.py)
+  # Covers: rubric structure, prompt-set well-formed, generate guarded
+  local-llm:
+    name: "Gate 20: Local LLM Guards"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: gate 20 — local llm guards + prompt set
+        run: python tests/test_local_llm.py
+
+  # Gate 21: MLX trainer dense SGD (train/train_score_head.py)
+  # Covers: dense SGD convergence (MLX paths skip-guarded on ubuntu)
+  mlx-trainer:
+    name: "Gate 21: MLX Trainer Dense SGD"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: gate 21 — mlx trainer dense SGD
+        run: python tests/test_train_score_head.py
+
+  # Gate 22: finetune job launcher confirm-gate (train/finetune_job.py)
+  # Covers: dry-run output + confirm-gate; no HF account required
+  finetune-job:
+    name: "Gate 22: Finetune Job Launcher"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: gate 22 — finetune job launcher confirm-gate
+        run: python tests/test_finetune_job.py
+
   # Full demo integration test (runs last, validates the whole spine)
   demo-integration:
     name: "Demo: Full Spine"
     runs-on: ubuntu-latest
-    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend]
+    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend, serve-endpoint, router-contention, hermes-provider, route-and-hook, skill-packaging, ondevice-demo, routing-demo-secondary, ngram-score-head, hf-scout, eval-score-head, local-llm, mlx-trainer, finetune-job]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -280,7 +358,7 @@ jobs:
   all-gates:
     name: "✅ All Gates Pass"
     runs-on: ubuntu-latest
-    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend, serve-endpoint, router-contention, hermes-provider, route-and-hook, skill-packaging, ondevice-demo, routing-demo-secondary, demo-integration]
+    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend, serve-endpoint, router-contention, hermes-provider, route-and-hook, skill-packaging, ondevice-demo, routing-demo-secondary, ngram-score-head, hf-scout, eval-score-head, local-llm, mlx-trainer, finetune-job, demo-integration]
     if: always()
     steps:
       - name: Check all gates
@@ -301,8 +379,14 @@ jobs:
              [[ "${{ needs.skill-packaging.result }}" != "success" ]] ||
              [[ "${{ needs.ondevice-demo.result }}" != "success" ]] ||
              [[ "${{ needs.routing-demo-secondary.result }}" != "success" ]] ||
+             [[ "${{ needs.ngram-score-head.result }}" != "success" ]] ||
+             [[ "${{ needs.hf-scout.result }}" != "success" ]] ||
+             [[ "${{ needs.eval-score-head.result }}" != "success" ]] ||
+             [[ "${{ needs.local-llm.result }}" != "success" ]] ||
+             [[ "${{ needs.mlx-trainer.result }}" != "success" ]] ||
+             [[ "${{ needs.finetune-job.result }}" != "success" ]] ||
              [[ "${{ needs.demo-integration.result }}" != "success" ]]; then
             echo "::error::One or more gates failed"
             exit 1
           fi
-          echo "All 16 gates + demo integration passed"
+          echo "All 22 gates + demo integration passed"
