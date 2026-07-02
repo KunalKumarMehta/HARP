@@ -23,7 +23,8 @@ CALIBRATION_PATH = Path(__file__).parent / "score_head_calibration.json"
 
 
 def _h(token: str) -> int:
-    return zlib.crc32(token.encode("utf-8")) % DIM  # ponytail: crc32 hashing trick; builtin hash() is salted
+    # ponytail: crc32 hashing trick; builtin hash() is salted
+    return zlib.crc32(token.encode("utf-8")) % DIM
 
 
 def featurize(text: str) -> dict[int, float]:
@@ -84,7 +85,8 @@ def auc(scores: list[float], labels: list[int]) -> float:
     neg = [s for s, y in zip(scores, labels) if y == 0]
     if not pos or not neg:
         return 0.5
-    wins = sum((p > n_) + 0.5 * (p == n_) for p in pos for n_ in neg)  # ponytail: O(P*N) fine at 4k rows
+    # ponytail: O(P*N) fine at 4k rows
+    wins = sum((p > n_) + 0.5 * (p == n_) for p in pos for n_ in neg)
     return wins / (len(pos) * len(neg))
 
 
