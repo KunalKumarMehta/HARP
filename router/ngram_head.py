@@ -91,7 +91,8 @@ def auc(scores: list[float], labels: list[int]) -> float:
 
 
 def train(
-    rows: list[dict], epochs: int = 6, lr: float = 0.5
+    # ponytail: 10/0.3 picked by val-split sweep 2026-07-02; re-sweep if corpus changes
+    rows: list[dict], epochs: int = 10, lr: float = 0.3
 ) -> tuple[list[float], float]:
     """Plain SGD logistic regression; uses per-record `weight` (anti-collapse)."""
     w = [0.0] * DIM
