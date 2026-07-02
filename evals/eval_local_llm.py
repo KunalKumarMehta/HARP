@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import statistics
 import sys
 import time
 from pathlib import Path
@@ -59,12 +60,12 @@ def _main() -> int:
         dt = time.perf_counter() - t0
         answer = "".join(out)
         ok = rubric_pass(answer, r["expect"])
-        ttfts.append(first or dt)
+        ttfts.append(first if first is not None else dt)
         tps_all.append(ntok / dt if dt > 0 else 0.0)
         results.append({"prompt": r["prompt"][:60], "rubric": ok,
-                        "ttft_s": round(first or dt, 3), "tok_s": round(tps_all[-1], 1)})
+                        "ttft_s": round(first if first is not None else dt, 3), "tok_s": round(tps_all[-1], 1)})
     n_ok = sum(x["rubric"] for x in results)
-    med = sorted(tps_all)[len(tps_all) // 2]
+    med = statistics.median(tps_all)
     worst_ttft = max(ttfts)
     passes = worst_ttft < PASS_TTFT_S and med >= PASS_TPS and n_ok >= PASS_RUBRIC
     report = {"model": local_llm.model_id(), "rubric_ok": n_ok, "median_tok_s": round(med, 1),
