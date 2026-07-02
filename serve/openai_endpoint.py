@@ -115,12 +115,21 @@ def _strip_tool_calls(text: str) -> str:
 
 def _default_policy() -> RoutingPolicy:
     fn = default_score_fn()
-    cal = None
     if getattr(fn, "__name__", "") == "trained_ngram_head":
         from router.ngram_head import load_head_calibration
 
         cal = load_head_calibration()
-    return RoutingPolicy(score_fn=fn).calibrate(*(cal or demo_calibration()))
+        if cal:
+            return RoutingPolicy(score_fn=fn).calibrate(*cal)
+        # Head loaded but its calibration didn't: degrade BOTH together — the
+        # synthetic arrays are on the mock's score axis, not the head's.
+        import warnings
+
+        from router.router_policy import mock_score_fn
+
+        warnings.warn("score head calibration unavailable; degrading to mock + demo calibration")
+        fn = mock_score_fn
+    return RoutingPolicy(score_fn=fn).calibrate(*demo_calibration())
 
 
 def _classifier_name(state) -> str:
