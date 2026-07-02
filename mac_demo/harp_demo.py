@@ -81,6 +81,15 @@ def _client(base, key):
 
 def call_model(where: str, text: str):
     """Return (answer, latency_ms). where in {local, cloud}."""
+    if where == "local":
+        try:
+            import local_llm
+            if local_llm.available():
+                t0 = time.time()
+                out = local_llm.generate(text)
+                return out, int((time.time() - t0) * 1000)
+        except Exception:
+            pass  # fall through to the configured local endpoint
     t0 = time.time()
     if where == "local":
         client, model = _client(LOCAL_BASE, "ollama"), LOCAL_MODEL
