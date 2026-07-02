@@ -108,9 +108,10 @@ def _strip_tool_calls(text: str) -> str:
 
 
 # ---------------------------------------------------------------- default policy
-# Non-separable synthetic calibration (shared with demos + the self-test), so the
-# endpoint's AUTO gate is the real conformal gate on honest data, not a separable
-# toy array. The measured-on-real-hardware number lives in mac_demo/calibrate_real.py.
+# The gate's delta is score-scale-dependent: the trained n-gram head calibrates on
+# its own val-split arrays (router/score_head_calibration.json); only the mock
+# fallback uses the non-separable synthetic set shared with demos + the self-test.
+# The measured-on-real-hardware number lives in mac_demo/calibrate_real.py.
 
 def _default_policy() -> RoutingPolicy:
     fn = default_score_fn()
