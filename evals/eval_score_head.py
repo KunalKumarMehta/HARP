@@ -53,14 +53,31 @@ def _load_test_rows() -> list[dict]:
 
 
 def _main() -> int:
+    import argparse
+
     from router.ngram_head import TrainedScoreHead  # noqa: E402
     from router.router_policy import mock_score_fn  # noqa: E402
+
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--hf", metavar="MODEL_ID", default=None,
+                    help="also eval a scouted HF text-classification model")
+    ap.add_argument("--escalate-labels", nargs="+", default=["LABEL_1"],
+                    help="labels whose summed prob is u(x); check the model's id2label")
+    ap.add_argument("--rows", type=int, default=None,
+                    help="cap test rows (HF models are slow; default: all)")
+    a = ap.parse_args()
+
     fns: dict[str, Callable[[str], float]] = {"mock": mock_score_fn}
     try:
         fns["trained_ngram_head"] = TrainedScoreHead.load()
     except FileNotFoundError:
         print("n-gram weights missing — run `python -m router.ngram_head` first")
-    rep = evaluate(fns, _load_test_rows())
+    if a.hf:
+        from evals.hf_candidate import HFClassifierScoreFn  # noqa: E402
+
+        fns[a.hf] = HFClassifierScoreFn(a.hf, tuple(a.escalate_labels))
+    rows = _load_test_rows()
+    rep = evaluate(fns, rows[: a.rows] if a.rows else rows)
     out = ROOT / "eval_report_score_head.json"
     out.write_text(json.dumps(rep, indent=2))
     for name, r in rep.items():

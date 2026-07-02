@@ -346,11 +346,24 @@ jobs:
       - name: gate 23 — drift watch + recalibration
         run: python tests/test_drift.py
 
+  # Gate 24: HF candidate adapter (evals/hf_candidate.py)
+  # Covers: escalate-label mapping, contract clamping, harness integration (stubbed)
+  hf-candidate:
+    name: "Gate 24: HF Candidate Adapter"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: gate 24 — hf candidate adapter
+        run: python tests/test_hf_candidate.py
+
   # Full demo integration test (runs last, validates the whole spine)
   demo-integration:
     name: "Demo: Full Spine"
     runs-on: ubuntu-latest
-    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend, serve-endpoint, router-contention, hermes-provider, route-and-hook, skill-packaging, ondevice-demo, routing-demo-secondary, ngram-score-head, hf-scout, eval-score-head, local-llm, mlx-trainer, finetune-job, drift-watch]
+    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend, serve-endpoint, router-contention, hermes-provider, route-and-hook, skill-packaging, ondevice-demo, routing-demo-secondary, ngram-score-head, hf-scout, eval-score-head, local-llm, mlx-trainer, finetune-job, drift-watch, hf-candidate]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
