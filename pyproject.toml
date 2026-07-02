@@ -41,7 +41,7 @@ Homepage = "https://github.com/KunalKumarMehta/HARP"
 Repository = "https://github.com/KunalKumarMehta/HARP"
 
 [tool.setuptools]
-packages = ["shared", "router", "cloud", "edge", "fabric", "demo", "serve", "evals"]
+packages = ["shared", "router", "cloud", "edge", "fabric", "demo", "serve", "evals", "train"]
 
 [tool.ruff]
 line-length = 100
