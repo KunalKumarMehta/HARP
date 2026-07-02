@@ -211,7 +211,8 @@ _TRIVIAL = re.compile(
 def mock_score_fn(query: str) -> float:
     """Stand-in for the mmBERT-small encoder head's hardness score u(x) = P(escalate),
     a single-pass classification output (NOT a decode-time margin).
-    Deterministic so the gate is testable; swap in the QNN-EP encoder for production.
+    Deterministic so the gate is testable; swap in a trained head (router/ngram_head.py or
+    the MLX encoder) for production.
     Heuristic: longer + reasoning-marker queries read as higher hardness."""
     q = query.lower()
     base = min(len(query) / 400.0, 0.6)
@@ -220,6 +221,22 @@ def mock_score_fn(query: str) -> float:
                "bound", "under-rout")
     bump = 0.40 if any(m in q for m in markers) else 0.0
     return min(base + bump, 0.99)
+
+
+def default_score_fn() -> Callable[[str], float]:
+    """Best available score head: the trained n-gram head when its committed
+    weights load, else the mock heuristic (with a warning). Callers using the
+    trained head MUST calibrate on its own score axis (load_head_calibration),
+    not on demo_calibration() — delta is scale-dependent."""
+    try:
+        from router.ngram_head import TrainedScoreHead
+
+        return TrainedScoreHead.load()
+    except Exception as e:  # missing/corrupt weights: degrade, never crash routing
+        import warnings
+
+        warnings.warn(f"trained score head unavailable ({e}); using mock_score_fn")
+        return mock_score_fn
 
 
 class RoutingPolicy:
