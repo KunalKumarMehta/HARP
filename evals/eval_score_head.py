@@ -1,8 +1,8 @@
 """Eval harness for routing score heads on the held-out test split.
 
 Pass bar: beat the mock baseline AUC AND p95 latency < 10 ms per query.
-Candidates: mock (baseline), the trained n-gram head, and — when installed —
-an MLX head via --mlx-weights. Adopt/train decisions read this report.
+Candidates: mock (baseline), the trained n-gram head.
+Adopt/train decisions read this report.
 """
 from __future__ import annotations
 
@@ -17,13 +17,13 @@ from typing import Callable
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from router.ngram_head import TrainedScoreHead, auc  # noqa: E402
-from router.router_policy import mock_score_fn  # noqa: E402
-
 PASS_P95_MS = 10.0
 
 
 def evaluate(fns: dict[str, Callable[[str], float]], rows: list[dict]) -> dict:
+    from router.ngram_head import auc  # noqa: E402
+    if not rows:
+        return {}
     labels = [r["label"] for r in rows]
     rep: dict[str, dict] = {}
     for name, fn in fns.items():
@@ -53,6 +53,8 @@ def _load_test_rows() -> list[dict]:
 
 
 def _main() -> int:
+    from router.ngram_head import TrainedScoreHead  # noqa: E402
+    from router.router_policy import mock_score_fn  # noqa: E402
     fns: dict[str, Callable[[str], float]] = {"mock": mock_score_fn}
     try:
         fns["trained_ngram_head"] = TrainedScoreHead.load()
