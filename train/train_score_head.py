@@ -26,6 +26,9 @@ def _sigmoid(z: float) -> float:
 
 def train_dense(feats: list[list[float]], ys: list[float], wts: list[float],
                 epochs: int = 8, lr: float = 0.2) -> tuple[list[float], float]:
+    """Weighted online SGD logistic regression; wt scales each sample's gradient."""
+    if not feats:
+        return [], 0.0
     dim = len(feats[0])
     w, b = [0.0] * dim, 0.0
     for _ in range(epochs):
