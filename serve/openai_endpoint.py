@@ -49,7 +49,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from shared.harp_contract import Backend, InferRequest, Modality, RouteDecision, Tier
-from router.router_policy import RoutingFeatures, RoutingPolicy, demo_calibration
+from router.router_policy import RoutingFeatures, RoutingPolicy, default_score_fn, demo_calibration
 
 
 # ---------------------------------------------------------------- config
@@ -108,22 +108,36 @@ def _strip_tool_calls(text: str) -> str:
 
 
 # ---------------------------------------------------------------- default policy
-# Non-separable synthetic calibration (shared with demos + the self-test), so the
-# endpoint's AUTO gate is the real conformal gate on honest data, not a separable
-# toy array. The measured-on-real-hardware number lives in mac_demo/calibrate_real.py.
+# The gate's delta is score-scale-dependent: the trained n-gram head calibrates on
+# its own val-split arrays (router/score_head_calibration.json); only the mock
+# fallback uses the non-separable synthetic set shared with demos + the self-test.
+# The measured-on-real-hardware number lives in mac_demo/calibrate_real.py.
 
 def _default_policy() -> RoutingPolicy:
-    return RoutingPolicy().calibrate(*demo_calibration())
+    fn = default_score_fn()
+    if getattr(fn, "__name__", "") == "trained_ngram_head":
+        from router.ngram_head import load_head_calibration
+
+        cal = load_head_calibration()
+        if cal:
+            return RoutingPolicy(score_fn=fn).calibrate(*cal)
+        # Head loaded but its calibration didn't: degrade BOTH together — the
+        # synthetic arrays are on the mock's score axis, not the head's.
+        import warnings
+
+        from router.router_policy import mock_score_fn
+
+        warnings.warn("score head calibration unavailable; degrading to mock + demo calibration")
+        fn = mock_score_fn
+    return RoutingPolicy(score_fn=fn).calibrate(*demo_calibration())
 
 
 def _classifier_name(state) -> str:
-    """Name of the active complexity score_fn behind the AUTO gate. The default
-    mock_score_fn (token length + complexity-keyword count) is a PLACEHOLDER for the
-    trained mmBERT-small encoder head — surfaced on /health for demo transparency."""
+    """Name of the active complexity score_fn behind the AUTO gate."""
     fn = getattr(state.policy, "score_fn", None)
     name = getattr(fn, "__name__", "unknown")
-    placeholder = " (placeholder for mmBERT-small head)" if name == "mock_score_fn" else ""
-    return f"{name}{placeholder}"
+    suffix = " (heuristic fallback; trained head unavailable)" if name == "mock_score_fn" else ""
+    return f"{name}{suffix}"
 
 
 # ---------------------------------------------------------------- runtime state

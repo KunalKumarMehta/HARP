@@ -1,0 +1,20 @@
+{"prompt": "Summarize in one sentence: The conformal gate bounds the probability that a hard query stays on-device by calibrating a threshold on queries the edge model got wrong.", "expect": ["conformal", "edge"]}
+{"prompt": "Summarize in one sentence: Retrieval-augmented generation combines a vector search step with an LLM to answer questions grounded in a private document store.", "expect": ["retrieval", "document"]}
+{"prompt": "Summarize in one sentence: Quantization reduces model size by representing weights at lower bit precision, trading some accuracy for faster inference and smaller memory footprint.", "expect": ["quantization", "precision"]}
+{"prompt": "Summarize in one sentence: Edge AI places inference directly on mobile or IoT devices so that data never leaves the local hardware, reducing latency and improving privacy.", "expect": ["edge", "latency"]}
+{"prompt": "Summarize in one sentence: Apple Silicon M-series chips integrate CPU, GPU, and a Neural Engine on one die, enabling efficient on-device machine learning workloads.", "expect": ["neural", "silicon"]}
+{"prompt": "Summarize in one sentence: The transformer architecture uses self-attention to weigh the importance of all tokens in a sequence when predicting each output token.", "expect": ["attention", "token"]}
+{"prompt": "Summarize in one sentence: Mixture-of-experts models activate only a subset of their parameters per input token, achieving large model capacity at lower inference cost.", "expect": ["experts", "parameters"]}
+{"prompt": "Summarize in one sentence: Speculative decoding uses a small draft model to propose multiple tokens at once, which a large verifier model accepts or rejects in a single forward pass.", "expect": ["draft", "tokens"]}
+{"prompt": "List three risks of running an LLM only on-device.", "expect": ["battery", "memory"]}
+{"prompt": "What is the capital of France?", "expect": ["paris"]}
+{"prompt": "Name the programming language created by Guido van Rossum.", "expect": ["python"]}
+{"prompt": "What does HTTP stand for?", "expect": ["hypertext"]}
+{"prompt": "How many bits are in a byte?", "expect": ["8"]}
+{"prompt": "What year did the first iPhone launch?", "expect": ["2007"]}
+{"prompt": "Rewrite as a polite one-line email: meeting moved to 3pm.", "expect": ["3"]}
+{"prompt": "Rewrite the following as a bulleted list: We need milk eggs bread and coffee.", "expect": ["milk", "eggs"]}
+{"prompt": "Convert to title case: the quick brown fox jumps over the lazy dog.", "expect": ["Quick", "Fox"]}
+{"prompt": "Rewrite as a formal sentence: hey can u send me the report asap thx.", "expect": ["report"]}
+{"prompt": "Translate to one simple sentence: Please provide a brief yet comprehensive overview of the current status.", "expect": ["status"]}
+{"prompt": "Extract just the numbers from this sentence: We sold 42 units at $19 each for a total of $798.", "expect": ["42", "19"]}

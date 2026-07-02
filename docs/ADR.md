@@ -185,3 +185,19 @@ reports `route_classifier` with an explicit "placeholder for mmBERT-small head" 
 **Status:** Accepted. **Consequences:** Demo decisions are believable and honest about
 their provenance; swapping in the trained head changes the complexity axis only and
 touches neither the endpoint surface nor the hook/skill.
+
+## ADR-0021 — Edge target pivots to Apple silicon; eval-first model adoption
+**Context:** ADR-0007/0009 targeted mmBERT-small on Hexagon via QAIRT; the compile
+spike needs an x86-64 host + AI Hub token and never ran. The precompiled Genie bundle
+path (ADR-0009) is real hardware, but the lab machine is a Mac, not a QDC. Meanwhile,
+Apple silicon (MLX) gives us a concrete, measurable edge target today. **Decision:**
+Primary edge = Apple silicon (MLX); NVIDIA remains the cloud/training side (`hf jobs`).
+`edge/` is retained as legacy, unmaintained. Models are adopted from the HF Hub when
+they beat measured pass bars on our own data (`evals/`), trained otherwise (`train/`).
+The AUTO gate's complexity axis is now the trained n-gram head (`router/ngram_head.py`),
+calibrated on its own score axis; the MLX linear-probe head is the upgrade path.
+**Status:** Accepted. Supersedes ADR-0007, ADR-0009; ADR-0020's swap-only claim is
+now demonstrated. **Consequences:** A concrete eval-first adoption loop is in place
+(HF scout → eval harness → adopt/train decision); the n-gram head (AUC 0.984, 300-query
+calibration) replaces `mock_score_fn` as the complexity axis; Hexagon/QAIRT paths remain
+in the codebase but are not CI-gated.

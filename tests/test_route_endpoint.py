@@ -92,7 +92,8 @@ def test_busy_hint_sheds() -> None:
 def test_health_reports_classifier() -> None:
     body = _online_client().get("/health").json()
     assert "route_classifier" in body
-    assert "placeholder" in body["route_classifier"]   # mmBERT placeholder labeled
+    assert "trained_ngram_head" in body["route_classifier"], body["route_classifier"]
+    assert "placeholder" not in body["route_classifier"]
 
 
 def _main() -> int:
