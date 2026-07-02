@@ -72,6 +72,12 @@ _BANDS: list[Template] = [
     Template("convert 10 km to miles", 0.08, "verifiable"),
     Template("what's the capital of Karnataka", 0.07, "verifiable"),
     Template("spell 'accommodation'", 0.05, "verifiable"),
+    # short casual / code-switched greetings + acks (demo traffic looks like this;
+    # without them the head scores OOD ~0.5 and the gate escalates everything)
+    Template("namaste — kaam shuru karein", 0.03, "open"),
+    Template("haan, theek hai — save kar do", 0.03, "open"),
+    Template("ok done, log it", 0.04, "open"),
+    Template("today's mandi rate for wheat", 0.08, "verifiable"),
     # --- simple (d ~0.25) : short transform, one-hop
     Template("summarize this paragraph in one line", 0.22, "open"),
     Template("rewrite this sentence more politely", 0.24, "open"),
@@ -79,6 +85,8 @@ _BANDS: list[Template] = [
     Template("list three synonyms for 'robust'", 0.18, "open"),
     Template("extract the date from: invoice dated 14 March 2026", 0.26, "verifiable"),
     Template("translate 'good morning' to Hindi", 0.23, "verifiable"),
+    Template("log today's wheat field inspection notes", 0.20, "open"),
+    Template("summarize my last three field notes in one line", 0.24, "open"),
     # --- moderate (d ~0.5) : multi-hop, light reasoning
     Template("compare two pricing plans and say which is cheaper at 30 units", 0.48, "verifiable"),
     Template("draft a two-sentence apology email for a late delivery", 0.46, "open"),
