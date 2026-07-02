@@ -333,11 +333,24 @@ jobs:
       - name: gate 22 — finetune job launcher confirm-gate
         run: python tests/test_finetune_job.py
 
+  # Gate 23: drift watch + recalibration (router/drift.py)
+  # Covers: under-route math, unverified-row skipping, tiny-trace recal refusal
+  drift-watch:
+    name: "Gate 23: Drift Watch"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: gate 23 — drift watch + recalibration
+        run: python tests/test_drift.py
+
   # Full demo integration test (runs last, validates the whole spine)
   demo-integration:
     name: "Demo: Full Spine"
     runs-on: ubuntu-latest
-    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend, serve-endpoint, router-contention, hermes-provider, route-and-hook, skill-packaging, ondevice-demo, routing-demo-secondary, ngram-score-head, hf-scout, eval-score-head, local-llm, mlx-trainer, finetune-job]
+    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend, serve-endpoint, router-contention, hermes-provider, route-and-hook, skill-packaging, ondevice-demo, routing-demo-secondary, ngram-score-head, hf-scout, eval-score-head, local-llm, mlx-trainer, finetune-job, drift-watch]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
