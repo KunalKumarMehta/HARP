@@ -37,12 +37,18 @@ def _load():
     return _model, _tokenizer
 
 
-def generate(prompt: str, max_tokens: int = 256) -> str:
+def stream(prompt: str, max_tokens: int = 256):
+    """Yield answer text chunks as they are generated (TTFT = first yield)."""
     if not available():
         raise RuntimeError("mlx_lm not installed — pip install -e .[apple]")
-    from mlx_lm import generate as _gen
+    from mlx_lm import stream_generate
 
     model, tok = _load()
     msgs = [{"role": "user", "content": prompt}]
     text = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
-    return _gen(model, tok, prompt=text, max_tokens=max_tokens, verbose=False)
+    for r in stream_generate(model, tok, prompt=text, max_tokens=max_tokens):
+        yield r.text
+
+
+def generate(prompt: str, max_tokens: int = 256) -> str:
+    return "".join(stream(prompt, max_tokens))

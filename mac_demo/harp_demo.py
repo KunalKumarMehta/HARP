@@ -85,9 +85,15 @@ def call_model(where: str, text: str):
         try:
             import local_llm
             if local_llm.available():
-                t0 = time.time()
-                out = local_llm.generate(text)
-                return out, int((time.time() - t0) * 1000)
+                t0, ttft, parts = time.time(), None, []
+                for chunk in local_llm.stream(text):
+                    if ttft is None:
+                        ttft = time.time() - t0
+                        print("   ⟨on-device⟩ ", end="", flush=True)
+                    parts.append(chunk)
+                    print(chunk, end="", flush=True)
+                print(f"   [ttft {ttft:.2f}s]" if ttft is not None else "")
+                return "".join(parts), int((time.time() - t0) * 1000)
         except Exception:
             pass  # fall through to the configured local endpoint
     t0 = time.time()

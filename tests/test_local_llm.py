@@ -35,11 +35,25 @@ def test_generate_guarded() -> None:
             pass
 
 
+def test_stream_guarded() -> None:
+    if local_llm.available():
+        chunks = list(local_llm.stream("Say the word ready.", max_tokens=8))
+        assert chunks and all(isinstance(c, str) for c in chunks)
+        assert "".join(chunks).strip()
+    else:
+        try:
+            list(local_llm.stream("hi"))
+            raise AssertionError("expected RuntimeError when mlx_lm missing")
+        except RuntimeError:
+            pass
+
+
 def _main() -> int:
-    for fn in (test_rubric, test_prompt_set_wellformed, test_generate_guarded):
+    for fn in (test_rubric, test_prompt_set_wellformed, test_generate_guarded,
+               test_stream_guarded):
         fn()
         print(f"  OK {fn.__name__}")
-    print("test_local_llm: 3 checks passed")
+    print("test_local_llm: 4 checks passed")
     return 0
 
 
