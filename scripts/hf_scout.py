@@ -96,7 +96,7 @@ def scout(task: str, limit: int, max_params_b: float | None, require_mlx: bool,
     try:
         for search, extra in QUERIES[task]:
             raw.extend(_fetch(search, extra, limit))
-    except OSError as e:
+    except (OSError, json.JSONDecodeError) as e:
         if out_path.exists():
             print(f"HF API unreachable ({e}); using cached {out_path}")
             return json.loads(out_path.read_text())["candidates"]
