@@ -384,7 +384,7 @@ jobs:
   all-gates:
     name: "✅ All Gates Pass"
     runs-on: ubuntu-latest
-    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend, serve-endpoint, router-contention, hermes-provider, route-and-hook, skill-packaging, ondevice-demo, routing-demo-secondary, ngram-score-head, hf-scout, eval-score-head, local-llm, mlx-trainer, finetune-job, demo-integration]
+    needs: [contract-smoke, conformance, sync-queue, e2e-smoke, ws-roundtrip, plan-codec, executor-smoke, genie-backend, remote-backend, serve-endpoint, router-contention, hermes-provider, route-and-hook, skill-packaging, ondevice-demo, routing-demo-secondary, ngram-score-head, hf-scout, eval-score-head, local-llm, mlx-trainer, finetune-job, drift-watch, hf-candidate, demo-integration]
     if: always()
     steps:
       - name: Check all gates
